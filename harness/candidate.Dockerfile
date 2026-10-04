@@ -60,6 +60,9 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo build --release -p harness-candidate \
     && cp /src/target/release/harness-candidate /usr/local/bin/harness-candidate
 
+# hadolint ignore=DL3006
+# PG_IMAGE is always a tag- or digest-pinned reference supplied by the caller
+# (see harness/runner.py `candidate_image_tag`); hadolint cannot see the ARG.
 FROM ${PG_IMAGE} AS runtime
 
 COPY --from=builder /usr/local/bin/harness-candidate /usr/local/bin/harness-candidate

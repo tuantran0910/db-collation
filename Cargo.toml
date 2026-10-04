@@ -65,6 +65,9 @@ missing_panics_doc = "allow"
 module_name_repetitions = "allow"
 must_use_candidate = "allow"
 redundant_pub_crate = "allow"
+# `#[test]` functions are never called in a const context; the nursery lint
+# flags simple ones regardless, and making a test `const fn` is meaningless.
+missing_const_for_fn = "allow"
 # Transitive duplicate versions (e.g. `syn` 2 and 3 via unrelated proc-macro
 # dependencies of criterion/serde) are not actionable here; pinning another
 # crate's transitives would be worse than the duplicate.

@@ -259,12 +259,19 @@ mod tests {
     }
 
     #[test]
-    fn test_tailored_locale_adds_third_component() {
-        // A tailored locale reports a third (tailoring) component, matching
-        // PostgreSQL's `153.128.46`-style values. Skip if this build lacks the
-        // locale.
-        if let Some(v) = local_collversion("de-u-co-phonebk") {
-            assert_eq!(v.split('.').count(), 3, "unexpected version shape: {v}");
+    fn test_tailored_locale_adds_component() {
+        // A tailored locale reports at least one component beyond the base
+        // `major.uca` pair — PostgreSQL's `153.128.46`-style values. The exact
+        // count depends on the ICU data version (newer UCA revisions add a
+        // fourth), so assert "strictly more than the base", not an exact 3.
+        if let Some(base) = local_collversion("und") {
+            let base_parts = base.split('.').count();
+            if let Some(v) = local_collversion("de-u-co-phonebk") {
+                assert!(
+                    v.split('.').count() > base_parts,
+                    "tailored version {v} should have more components than base {base}"
+                );
+            }
         }
     }
 
