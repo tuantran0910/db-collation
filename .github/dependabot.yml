@@ -36,6 +36,8 @@ updates:
     commit-message:
       prefix: "ci"
       include: scope
+    ignore:
+      - dependency-name: "dtolnay/rust-toolchain"
     groups:
       github-actions:
         applies-to: version-updates
