@@ -5,4 +5,4 @@
 # PostgreSQL/MySQL containers that act as differential oracles.
 psycopg[binary]>=3.3.6,<4
 pymysql>=1.2.3,<2
-oracledb>=2.0,<3
+oracledb>=26.0.1,<27
