@@ -281,7 +281,7 @@ mod tests {
         match validate(&spec) {
             Err(Error::VersionMismatch { source, local }) => {
                 assert_eq!(source.as_str(), "1.2");
-                assert!(!local.as_str().is_empty());
+                assert_ne!(local.as_str(), "");
             }
             other => panic!("expected VersionMismatch, got {other:?}"),
         }

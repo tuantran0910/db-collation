@@ -84,16 +84,14 @@ fn bench(c: &mut Criterion) {
     group.finish();
 
     let equal = "a".repeat(64);
-    let equal_b = equal.clone();
     let prefix = "a".repeat(63);
     let early_a = format!("b{}", "a".repeat(63));
     let late_a = format!("{}x", "a".repeat(63));
-    let long_a = "a".repeat(4096);
-    let long_b = "a".repeat(4096);
+    let long = "a".repeat(4096);
 
     let mut shapes = c.benchmark_group("postgres_icu/shapes");
     shapes.bench_function("equal_64", |b| {
-        b.iter(|| black_box(col.compare(&equal, &equal_b).unwrap()));
+        b.iter(|| black_box(col.compare(&equal, &equal).unwrap()));
     });
     shapes.bench_function("early_difference_64", |b| {
         b.iter(|| black_box(col.compare(&prefix, &early_a).unwrap()));
@@ -102,7 +100,7 @@ fn bench(c: &mut Criterion) {
         b.iter(|| black_box(col.compare(&prefix, &late_a).unwrap()));
     });
     shapes.bench_function("long_prefix_4096", |b| {
-        b.iter(|| black_box(col.compare(&long_a, &long_b).unwrap()));
+        b.iter(|| black_box(col.compare(&long, &long).unwrap()));
     });
     shapes.finish();
 }

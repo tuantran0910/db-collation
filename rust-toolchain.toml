@@ -1,3 +1,10 @@
+# The default dev/CI toolchain. Pinned to an exact version so `-D warnings` with
+# `clippy::pedantic`/`nursery` cannot turn a green `main` red when a new stable
+# ships a new lint. The minimum supported Rust version (1.85) is verified
+# separately by the `msrv` CI job and the `make msrv` target.
+#
+# When you bump this, update the `toolchain:` input in `.github/workflows/*.yml`
+# (every job except `msrv`, which stays on 1.85) to the same version.
 [toolchain]
-channel = "1.85"
+channel = "1.99.0"
 components = ["rustfmt", "clippy"]

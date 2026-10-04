@@ -73,19 +73,16 @@ fn bench(c: &mut Criterion) {
     // first differing element, so equal keys and long common prefixes (worst
     // cases) must be measured apart from early differences (best case).
     let equal = "a".repeat(64);
-    let equal_b = equal.clone();
     let late_a = format!("{}x", "a".repeat(63));
     let early_a = format!("b{}", "a".repeat(63));
     let prefix = "a".repeat(63);
-    let long_a = "a".repeat(4096);
-    let long_b = "a".repeat(4096);
+    let long = "a".repeat(4096);
     // ½ expands to three elements under UCA; measure the expansion path.
     let expansion = "\u{bd}".repeat(64);
-    let expansion_b = expansion.clone();
 
     let mut shapes = c.benchmark_group("mysql_0900_ai_ci/shapes");
     shapes.bench_function("equal_prefix_64", |b| {
-        b.iter(|| black_box(mysql.compare(&equal, &equal_b).unwrap()));
+        b.iter(|| black_box(mysql.compare(&equal, &equal).unwrap()));
     });
     shapes.bench_function("late_difference_64", |b| {
         b.iter(|| black_box(mysql.compare(&prefix, &late_a).unwrap()));
@@ -94,10 +91,10 @@ fn bench(c: &mut Criterion) {
         b.iter(|| black_box(mysql.compare(&prefix, &early_a).unwrap()));
     });
     shapes.bench_function("equal_4096", |b| {
-        b.iter(|| black_box(mysql.compare(&long_a, &long_b).unwrap()));
+        b.iter(|| black_box(mysql.compare(&long, &long).unwrap()));
     });
     shapes.bench_function("expansion_64", |b| {
-        b.iter(|| black_box(mysql.compare(&expansion, &expansion_b).unwrap()));
+        b.iter(|| black_box(mysql.compare(&expansion, &expansion).unwrap()));
     });
     shapes.finish();
 }
