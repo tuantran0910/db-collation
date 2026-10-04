@@ -108,8 +108,46 @@ test: add supplementary default-ignorable cases
 
 ## Releasing
 
-1. Update `CHANGELOG.md`.
-2. Bump `version` in the root `Cargo.toml` `[workspace.package]`.
-3. Run `make ci`.
-4. `cargo publish -p db-collation`.
-5. Tag the release: `git tag -a vX.Y.Z -m "vX.Y.Z"` and push the tag.
+Releases are **tag-triggered**. [`.github/workflows/release.yml`](../.github/workflows/release.yml)
+verifies the tag against the manifest and CI, runs a publish dry-run, publishes
+to crates.io via [Trusted Publishing] (OIDC; no stored token), and creates a
+GitHub Release with the matching `CHANGELOG.md` section.
+
+1. Bump `version` in the root `Cargo.toml` `[workspace.package]`.
+2. Finalise `CHANGELOG.md`: move `[Unreleased]` content under a new
+   `## [X.Y.Z] - YYYY-MM-DD` heading and add the compare-link footer
+   (`[X.Y.Z]: https://github.com/tuantran0910/db-collation/releases/tag/vX.Y.Z`).
+3. Merge to `main` and wait for the `ci-success` check to go green.
+4. Tag and push:
+   ```sh
+   git tag -a vX.Y.Z -m "vX.Y.Z"
+   git push origin vX.Y.Z
+   ```
+5. The `release` environment requires manual approval before the publish step
+   runs; approve it in the Actions UI.
+
+Local checks before tagging:
+
+```sh
+make release-check   # cargo publish --dry-run (packaging + build)
+make release-notes   # preview the changelog section GitHub will show
+```
+
+[Trusted Publishing]: https://crates.io/docs/trusted-publishing
+
+### One-time crates.io setup
+
+Trusted Publishing cannot be configured until the crate has been published
+once. The bootstrap (already done for `db-collation`) is a manual publish with
+an API token:
+
+```sh
+cargo login          # paste a publish-scoped crates.io token
+cargo publish -p db-collation --all-features --locked
+```
+
+Then, on the crates.io crate settings → **Trusted Publishing**, add GitHub:
+owner `tuantran0910`, repo `db-collation`, workflow `release.yml`, environment
+`release`. Create the matching GitHub **`release` environment** with required
+reviewers and a `v*` tag deployment rule. No `CARGO_REGISTRY_TOKEN` secret is
+needed afterwards.

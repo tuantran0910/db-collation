@@ -122,6 +122,12 @@ jobs:
       - uses: astral-sh/ruff-action@v3
         with:
           args: "check --config harness/ruff.toml harness"
+      - name: Check release-tooling formatting
+        run: pip install ruff && ruff format --check --config tools/ruff.toml tools
+      - name: Lint release tooling
+        run: ruff check --config tools/ruff.toml tools
+      - name: Run release-tooling unit tests
+        run: python -m unittest discover -s tools/tests -t tools/tests
       - name: Lint Dockerfiles
         uses: hadolint/hadolint-action@v3.1.0
         with:

@@ -27,6 +27,7 @@ DOCKERFILES := $(shell find . -iname '*dockerfile*' -not -path './target/*' -not
 .PHONY: help fmt fmt-check clippy check check-all test test-all doc doc-open \
 	build build-release deny msrv ci ci-full audit outdated clean clean-all \
 	harness harness-bmp deep gen-weights check-weights-drift candidate candidate-image \
+	release-check release-notes \
 	unit integration bench example venv \
 	py-fmt py-fmt-check py-lint py-fix py-test \
 	docker-fmt docker-fmt-check docker-lint
@@ -169,6 +170,14 @@ gen-weights: ## Regenerate MySQL weight tables from harness/data
 
 check-weights-drift: ## Fail if regenerating the weight tables changes them (CI)
 	$(HARNESS_PY) -m harness.check_weights
+
+## --- Releasing -------------------------------------------------------------
+
+release-check: ## Verify the crate packages and builds as it would for release (dry-run)
+	$(CARGO) publish -p $(PKG) --all-features --locked --dry-run
+
+release-notes: ## Print the CHANGELOG section for VERSION (VERSION=x.y.z; default: crate version)
+	$(PYTHON) tools/release_notes.py CHANGELOG.md $(or $(VERSION),$(shell $(CARGO) metadata --no-deps --format-version 1 | $(PYTHON) -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"]=="db-collation"))'))
 
 ## --- Cleanup ---------------------------------------------------------------
 

@@ -153,6 +153,17 @@ When behavior changes, update the matching doc in the same change:
   `Error::Unsupported`, and a mismatch is refused. Only runs where the candidate
   and source are built against the identical ICU data version can be exact.
 
+## Releasing
+
+Releases are tag-triggered and automated by `.github/workflows/release.yml`.
+Bump `version` in the root `Cargo.toml`, finalise `CHANGELOG.md` (move
+`[Unreleased]` under a dated heading), merge to `main`, wait for `ci-success`,
+then push a `vX.Y.Z` tag. The workflow verifies the tag matches the manifest and
+that CI passed, runs `cargo publish --dry-run`, publishes via crates.io Trusted
+Publishing (OIDC, no stored token), and creates a GitHub Release from the
+changelog. See `docs/DEVELOPMENT.md`. Preview locally with `make release-check`
+and `make release-notes`.
+
 ## Commits and PRs
 
 - Conventional Commits, e.g. `fix(mysql): reproduce PAD SPACE padding`,

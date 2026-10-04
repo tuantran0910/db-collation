@@ -1,0 +1,127 @@
+name: Release
+
+# Publish db-collation to crates.io when a version tag is pushed.
+#
+# The flow is deliberately tag-triggered and manual-first, following the Cargo
+# Book's guidance for libraries:
+#
+#   1. Bump `version` in the workspace `Cargo.toml` and finalise `CHANGELOG.md`.
+#   2. Merge that to `main` and let CI go green.
+#   3. `git tag -a vX.Y.Z -m vX.Y.Z && git push origin vX.Y.Z`.
+#
+# This workflow then: verifies the tag matches the manifest, verifies CI passed
+# on the tagged commit, runs a publish dry-run, publishes via crates.io Trusted
+# Publishing (OIDC; no long-lived token), and creates a GitHub Release with the
+# matching changelog section.
+#
+# One-time setup (see docs/DEVELOPMENT.md): the crate must be published once
+# manually before Trusted Publishing can be configured on crates.io.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+# Never run two releases at once; a release must not be cancelled midway.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  CARGO_INCREMENTAL: 0
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: publish to crates.io
+    runs-on: ubuntu-latest
+    # A protected environment (required reviewers, tag-only deployment rules)
+    # gates the actual publish. See docs/DEVELOPMENT.md.
+    environment:
+      name: release
+      url: https://crates.io/crates/db-collation
+    permissions:
+      contents: write # create the GitHub Release
+      id-token: write # OIDC exchange for a short-lived crates.io token
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.99.0"
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install ICU (for the postgres-icu feature)
+        run: sudo apt-get update && sudo apt-get install -y libicu-dev pkg-config
+
+      - name: Resolve and verify the tag against the manifest
+        id: version
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"                 # e.g. v0.2.0
+          tag_version="${tag#v}"
+          manifest_version="$(cargo metadata --no-deps --format-version 1 \
+            | python3 -c 'import json,sys; ms=json.load(sys.stdin)["packages"]; \
+                print(next(p["version"] for p in ms if p["name"]=="db-collation"))')"
+          if [ "$tag_version" != "$manifest_version" ]; then
+            echo "::error::tag $tag (=$tag_version) does not match Cargo.toml version $manifest_version"
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$manifest_version" >> "$GITHUB_OUTPUT"
+          echo "Verified tag $tag == manifest version $manifest_version"
+
+      - name: Verify CI succeeded on the tagged commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # `gh` is preinstalled on GitHub-hosted runners. Require a successful
+          # `ci-success` check on this exact commit before publishing.
+          conclusion="$(gh api \
+            "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs" \
+            --jq '[.check_runs[] | select(.name == "ci-success")] | (last // empty) | .conclusion')"
+          if [ "$conclusion" != "success" ]; then
+            echo "::error::ci-success on ${GITHUB_SHA} is '${conclusion:-missing}', expected 'success'"
+            exit 1
+          fi
+          echo "ci-success is green on ${GITHUB_SHA}"
+
+      - name: Publish dry-run (packaging + build verification)
+        run: cargo publish -p db-collation --all-features --locked --dry-run
+
+      - name: Package the crate
+        run: cargo package -p db-collation --all-features --locked
+
+      - name: Authenticate with crates.io (Trusted Publishing / OIDC)
+        id: auth
+        uses: rust-lang/crates-io-auth-action@v1
+
+      - name: Publish to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: cargo publish -p db-collation --all-features --locked
+
+      - name: Extract release notes from CHANGELOG.md
+        id: notes
+        run: |
+          set -euo pipefail
+          python3 tools/release_notes.py CHANGELOG.md "${{ steps.version.outputs.version }}" \
+            > release-notes.md
+          cat release-notes.md
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          crate="target/package/db-collation-${{ steps.version.outputs.version }}.crate"
+          gh release create "${{ steps.version.outputs.tag }}" \
+            --title "${{ steps.version.outputs.tag }}" \
+            --notes-file release-notes.md \
+            "$crate"
