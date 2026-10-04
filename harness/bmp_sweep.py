@@ -19,7 +19,7 @@ from pathlib import Path
 from .candidate import HostCandidate
 from .differ import compare_orders
 from .oracles import MySqlOracle
-from .runner import start_mysql, stop
+from .runner import container_name, start_mysql, stop
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -79,10 +79,15 @@ def run_sweep(image, collations, port=18306, keep=False):
     cands = candidate_order(corpus)
     print(f"candidate orders computed in {time.time() - t0:.1f}s")
 
-    name = "harness-bmp"
-    start_mysql(image, name, port)
+    # A unique, owned name so cleanup only touches this invocation's container,
+    # even if several sweeps run at once.
+    name = container_name("harness-bmp", image)
     oracle = None
+    failures = []
+    # `start_mysql` runs inside `try` so a readiness failure still hits the
+    # `finally` that removes the container this invocation created.
     try:
+        start_mysql(image, name, port)
         for _ in range(30):
             try:
                 oracle = MySqlOracle(port=port)
@@ -92,7 +97,6 @@ def run_sweep(image, collations, port=18306, keep=False):
         if oracle is None:
             raise RuntimeError("mysql not reachable")
         oracle.reset_table(corpus)
-        failures = []
         for collation in collations:
             print(f"\n=== {collation} ===")
             src = mysql_order(oracle, collation, corpus)
@@ -109,8 +113,9 @@ def run_sweep(image, collations, port=18306, keep=False):
             else:
                 failures.append(f"{collation}: {reason}")
                 print(f"  MISMATCH: {reason}; e.g. {examples}")
-        oracle.close()
     finally:
+        if oracle is not None:
+            oracle.close()
         if not keep:
             stop(name)
 

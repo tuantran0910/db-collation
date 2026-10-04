@@ -55,6 +55,87 @@ class TestBmpSweepCorpus(unittest.TestCase):
         self.assertTrue(all(cp > 0xFFFF for cp in EXTRA))
 
 
+class TestSweepLifecycle(unittest.TestCase):
+    """The BMP sweep must own its container and clean it up on every exit path.
+
+    `start_mysql` runs inside the sweep's `try`, so a readiness failure must
+    still remove the container this invocation created. The container name must
+    also be unique per run, so concurrent sweeps never `docker rm -f` each
+    other's.
+    """
+
+    @staticmethod
+    def _patch(calls, *, raise_on_start):
+        from unittest import mock
+
+        def fake_start(image, name, port):
+            calls.append(("start", name))
+            if raise_on_start:
+                raise RuntimeError("mysql did not become ready")
+
+        def fake_stop(name):
+            calls.append(("stop", name))
+
+        # A stub oracle so the success path does not wait on a real database.
+        oracle = mock.MagicMock()
+        oracle.order.return_value = mock.MagicMock(order=[], rank={})
+
+        patches = [
+            mock.patch(
+                "harness.bmp_sweep.candidate_order",
+                return_value={
+                    "utf8mb4_0900_ai_ci": mock.MagicMock(supported=False, note="stub"),
+                },
+            ),
+            mock.patch("harness.bmp_sweep.start_mysql", side_effect=fake_start),
+            mock.patch("harness.bmp_sweep.stop", side_effect=fake_stop),
+            mock.patch("harness.bmp_sweep.MySqlOracle", return_value=oracle),
+            mock.patch("harness.bmp_sweep.compare_orders", return_value=(True, "", [])),
+        ]
+        return patches, oracle
+
+    def _run(self, calls, *, raise_on_start):
+        from contextlib import ExitStack
+
+        from harness.bmp_sweep import run_sweep
+
+        patches, _oracle = self._patch(calls, raise_on_start=raise_on_start)
+        with ExitStack() as stack:
+            for patch in patches:
+                stack.enter_context(patch)
+            # The stubbed candidate refuses the collation after a successful
+            # start; that still exercises the cleanup path.
+            if raise_on_start:
+                with self.assertRaises(RuntimeError):
+                    run_sweep("mysql:8.4", ["utf8mb4_0900_ai_ci"])
+            else:
+                run_sweep("mysql:8.4", ["utf8mb4_0900_ai_ci"])
+
+    def test_startup_failure_still_removes_container(self):
+        calls = []
+        self._run(calls, raise_on_start=True)
+        # Exactly one start, then exactly one stop for the same (owned) name.
+        starts = [n for k, n in calls if k == "start"]
+        stops = [n for k, n in calls if k == "stop"]
+        self.assertEqual(len(starts), 1)
+        self.assertEqual(stops, starts)
+
+    def test_cleanup_happens_after_successful_start(self):
+        calls = []
+        self._run(calls, raise_on_start=False)
+        starts = [n for k, n in calls if k == "start"]
+        stops = [n for k, n in calls if k == "stop"]
+        self.assertEqual(stops, starts)
+
+    def test_container_name_is_unique_per_invocation(self):
+        calls = []
+        self._run(calls, raise_on_start=True)
+        self._run(calls, raise_on_start=True)
+        starts = [n for k, n in calls if k == "start"]
+        self.assertEqual(len(starts), 2)
+        self.assertNotEqual(starts[0], starts[1])
+
+
 class TestWeightDrift(unittest.TestCase):
     """The drift check must compare the whole generated file, not just hex.
 
