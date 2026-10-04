@@ -42,6 +42,7 @@ crates/db-collation/        the library (the product)
   src/error.rs              Error / Result
   src/mysql.rs              MySQL UCA backend (+ src/mysql/table_*.rs GENERATED)
   src/postgres.rs           PostgreSQL ICU backend
+  src/oracle.rs             Oracle backend (+ src/oracle/uca.rs, table_*.rs GENERATED)
   src/thread_local.rs       per-thread ICU collator cache
   tests/                    integration tests
   examples/                 runnable examples
@@ -51,9 +52,10 @@ harness/                    Python differential harness (oracle + differ; test-t
   candidate.py              runs the real crate binary (host and in-container)
   candidate.Dockerfile      multi-stage candidate image derived FROM the oracle image
   run.py / runner.py        orchestration; runner builds the candidate image per PG image
-  oracles.py                live PG/MySQL adapters (the only DB I/O)
-  data/                     Unicode UCA allkeys files (generation inputs)
+  oracles.py                live PG/MySQL/Oracle adapters (the only DB I/O)
+  data/                     Unicode UCA allkeys + UnicodeData files (generation inputs)
   gen_weights.py            regenerates src/mysql/table_*.rs
+  gen_uca.py                regenerates src/oracle/table_*.rs
 docs/                       architecture, configuration, decisions, development
 ```
 
@@ -65,11 +67,13 @@ Use the `Makefile`; run `make help` for the full list.
 make fmt clippy test-all     # before every commit
 make ci                      # fast checks CI runs (fmt, clippy, tests, docs, py, docker)
 make ci-full                 # fast suite + MSRV, cargo-deny, drift (no Docker/DB)
-make candidate               # build the candidate binary on the host (MySQL path)
-make harness                 # differential matrix vs live PG/MySQL (needs Docker)
+make candidate               # build the candidate binary on the host (MySQL/Oracle path)
+make harness                 # differential matrix vs live PG/MySQL/Oracle (needs Docker)
 make harness-bmp             # full-BMP sweep vs live MySQL (needs Docker)
-make deep                    # harness + harness-bmp
+make harness-oracle          # differential matrix vs live Oracle (needs Docker)
+make deep                    # harness + harness-bmp + harness-oracle
 make gen-weights             # regenerate MySQL weight tables
+make gen-uca                 # regenerate Oracle DUCET tables (or `python -m harness.gen_uca`)
 ```
 
 Requirements: Rust 1.85+, `rustfmt`, `clippy`, and ICU4C for the `postgres-icu`
@@ -92,9 +96,11 @@ configuration (return `Error::Unsupported`) rather than approximating.
 The harness compares the **real crate** against live databases — never a
 reimplementation. For PostgreSQL the candidate binary is built and run inside a
 candidate image derived `FROM` the oracle image, so it links the identical ICU
-data version; MySQL runs the same binary on the host. The harness also asserts
-the candidate reproduces the server's `collversion`, and includes negative
-controls so a green run is measurably meaningful.
+data version; MySQL and Oracle run the same binary on the host (their ordering
+does not depend on the host ICU). The harness also asserts the candidate
+reproduces the source's collation data version (`collversion` for PostgreSQL,
+the `UCA*` token for Oracle), and includes negative controls so a green run is
+measurably meaningful.
 
 The candidate reports a three-valued outcome (`ok` / `refused` / `error`). A
 clean construction refusal is the only acceptable non-support; a **runtime
@@ -105,13 +111,17 @@ reuse each other's linked binaries.
 
 For changes to the MySQL weight generator, also run `make harness-bmp`, which
 checks the candidate's total order over every BMP scalar against live MySQL.
+For changes to the Oracle generator (`harness/gen_uca.py`) or UCA backend, run
+`make harness-oracle`.
 
 ## Editing rules
 
 - **Generated files are off-limits.** `crates/db-collation/src/mysql/table_*.rs`
-  are generated from `harness/data/` by `harness/gen_weights.py`. Edit the
-  generator, not the output; regenerate with `make gen-weights`. They are
-  derived from the Unicode UCA `allkeys` files in `harness/data/`.
+  are generated from `harness/data/` by `harness/gen_weights.py`, and
+  `crates/db-collation/src/oracle/table_*.rs` by `harness/gen_uca.py`. Edit the
+  generator, not the output; regenerate with `make gen-weights` / `make gen-uca`.
+  They are derived from the Unicode UCA `allkeys` and `UnicodeData` files in
+  `harness/data/`.
 - **Public API changes** follow the Rust API Guidelines: newtypes with private
   fields, `#[non_exhaustive]` on configuration enums, constructors instead of
   struct literals, `Debug` on public types.

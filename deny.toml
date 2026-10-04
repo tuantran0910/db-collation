@@ -41,6 +41,9 @@ deny = [
     { name = "postgres" },
     { name = "mysql" },
     { name = "mysql_async" },
+    { name = "oracle" },
+    { name = "sibyl" },
+    { name = "odpic" },
     { name = "sqlx" },
     { name = "rusqlite" },
     # TLS stacks: no network I/O, so nothing should pull these in.

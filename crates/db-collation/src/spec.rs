@@ -278,6 +278,163 @@ impl MysqlCollation {
     }
 }
 
+/// `Oracle` collation provider.
+///
+/// Oracle compares character data under a *named collation* selected by
+/// `NLS_SORT`. Only two families are reproducible by this crate: the bytewise
+/// `BINARY` collation and the `UCA*_DUCET` Unicode Collation Algorithm
+/// collations built from the open DUCET tables.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub enum OracleProvider {
+    /// Bytewise comparison (`NLS_SORT=BINARY`) — the `Binary` backend.
+    Binary,
+    /// A `UCA*_DUCET` collation backed by an open DUCET weight table.
+    Uca,
+}
+
+/// `Oracle` UCA version for a `UCA*_DUCET` collation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub enum OracleUcaVersion {
+    /// `UCA0700_DUCET` — Unicode 7.0.0 DUCET.
+    Uca700,
+    /// `UCA1210_DUCET` — Unicode 12.1.0 DUCET.
+    Uca1210,
+}
+
+impl OracleUcaVersion {
+    /// The canonical version token.
+    #[must_use]
+    pub fn version_id(self) -> VersionId {
+        match self {
+            Self::Uca700 => VersionId::new("7.0.0"),
+            Self::Uca1210 => VersionId::new("12.1.0"),
+        }
+    }
+
+    /// The `Oracle` collation name this version corresponds to.
+    #[must_use]
+    pub const fn collation_name(self) -> &'static str {
+        match self {
+            Self::Uca700 => "UCA0700_DUCET",
+            Self::Uca1210 => "UCA1210_DUCET",
+        }
+    }
+}
+
+/// A resolved `Oracle` collation description.
+///
+/// Fields are private; use the constructors. Only `NLS_SORT=BINARY` on an
+/// `AL32UTF8` database with `VARCHAR2` semantics, and the `UCA0700_DUCET` /
+/// `UCA1210_DUCET` collations, are reproducible. Every other Oracle collation
+/// (monolingual, `_M`, `BINARY_CI`/`BINARY_AI`, `*_ROOT`, `*_ORADUCET`, the
+/// tailored UCA collations) is refused at construction.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub struct OracleCollation {
+    provider: OracleProvider,
+    /// The resolved `NLS_SORT` name (normalized), e.g. `BINARY`, `UCA1210_DUCET`.
+    nls_sort: String,
+    uca_version: Option<OracleUcaVersion>,
+    // Only AL32UTF8 is modelled. Kept explicit so a wrong source is refused
+    // rather than silently compared with the wrong bytes.
+    charset: String,
+    // `CHAR` is blank-padded; `VARCHAR2` is not. Only the latter is modelled.
+    blank_padded: bool,
+}
+
+impl OracleCollation {
+    /// Bytewise `NLS_SORT=BINARY` on an `AL32UTF8` `VARCHAR2`.
+    #[must_use]
+    pub fn binary() -> Self {
+        Self {
+            provider: OracleProvider::Binary,
+            nls_sort: "BINARY".to_owned(),
+            uca_version: None,
+            charset: "AL32UTF8".to_owned(),
+            blank_padded: false,
+        }
+    }
+
+    /// A `UCA*_DUCET` collation on an `AL32UTF8` `VARCHAR2`.
+    #[must_use]
+    pub fn uca_ducet(version: OracleUcaVersion) -> Self {
+        Self {
+            provider: OracleProvider::Uca,
+            nls_sort: version.collation_name().to_owned(),
+            uca_version: Some(version),
+            charset: "AL32UTF8".to_owned(),
+            blank_padded: false,
+        }
+    }
+
+    /// Build a description from a raw resolved `NLS_SORT` name and source
+    /// charset. The name is normalized (trimmed, upper-cased). Unknown or
+    /// unsupported names are refused at [`Collation::oracle`].
+    #[must_use]
+    pub fn from_nls_sort(nls_sort: impl Into<String>, charset: impl Into<String>) -> Self {
+        let name = nls_sort.into().trim().to_ascii_uppercase();
+        let (provider, uca_version) = match name.as_str() {
+            "UCA0700_DUCET" => (OracleProvider::Uca, Some(OracleUcaVersion::Uca700)),
+            "UCA1210_DUCET" => (OracleProvider::Uca, Some(OracleUcaVersion::Uca1210)),
+            // `BINARY` and anything else: unsupported names are refused at
+            // construction; only `BINARY` is a valid binary-provider name.
+            _ => (OracleProvider::Binary, None),
+        };
+        Self {
+            provider,
+            nls_sort: name,
+            uca_version,
+            charset: charset.into(),
+            blank_padded: false,
+        }
+    }
+
+    /// Mark the source as a blank-padded `CHAR`/`NCHAR` column.
+    ///
+    /// Blank-padded comparison differs from `VARCHAR2` even under the same
+    /// collation, so any blank-padded source is refused at construction.
+    #[must_use]
+    pub fn with_blank_padded(mut self, blank_padded: bool) -> Self {
+        self.blank_padded = blank_padded;
+        self
+    }
+
+    /// The provider.
+    #[must_use]
+    pub const fn provider(&self) -> OracleProvider {
+        self.provider
+    }
+
+    /// The resolved `NLS_SORT` name.
+    #[must_use]
+    pub fn nls_sort(&self) -> &str {
+        &self.nls_sort
+    }
+
+    /// The UCA version, for `UCA*_DUCET` collations.
+    #[must_use]
+    pub const fn uca_version(&self) -> Option<OracleUcaVersion> {
+        self.uca_version
+    }
+
+    /// The source character set (only `AL32UTF8` is modelled).
+    #[must_use]
+    pub fn charset(&self) -> &str {
+        &self.charset
+    }
+
+    /// Whether the source is blank-padded (`CHAR`/`NCHAR`).
+    #[must_use]
+    pub const fn blank_padded(&self) -> bool {
+        self.blank_padded
+    }
+}
+
 /// Which backend a [`Collation`] uses.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -289,6 +446,8 @@ pub enum Backend {
     PostgresIcu(PostgresCollation),
     /// `MySQL` UCA weight tables.
     MysqlUca(MysqlCollation),
+    /// `Oracle` (bytewise `BINARY` or `UCA*_DUCET`).
+    Oracle(OracleCollation),
 }
 
 /// A collation that this crate can compare with, or an explicit refusal.
@@ -356,6 +515,7 @@ impl Collation {
     /// Refuses configurations this crate cannot reproduce exactly: libc
     /// providers other than `C`/`POSIX`, custom ICU rules, and non-UTF-8
     /// sources.
+    #[allow(clippy::needless_pass_by_value)]
     pub fn postgres(spec: PostgresCollation) -> Result<Self> {
         if !spec.encoding().eq_ignore_ascii_case("UTF8") {
             return Err(Error::unsupported(
@@ -429,6 +589,7 @@ impl Collation {
     }
 
     /// Construct a collation from a fully resolved `MySQL` description.
+    #[allow(clippy::needless_pass_by_value)]
     pub fn mysql(spec: MysqlCollation) -> Result<Self> {
         #[cfg(feature = "mysql-uca")]
         {
@@ -443,6 +604,28 @@ impl Collation {
             Err(Error::FeatureDisabled {
                 feature: "mysql-uca",
             })
+        }
+    }
+
+    /// Construct a collation from a fully resolved `Oracle` description.
+    ///
+    /// Only `NLS_SORT=BINARY` on `AL32UTF8` `VARCHAR2` (bytewise) and the
+    /// `UCA0700_DUCET` / `UCA1210_DUCET` collations are reproducible. Every
+    /// other Oracle collation — monolingual, `_M`, `BINARY_CI`/`BINARY_AI`,
+    /// `*_ROOT`, `*_ORADUCET`, tailored UCA, non-`AL32UTF8`, blank-padded — is
+    /// refused with [`Error::Unsupported`].
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn oracle(spec: OracleCollation) -> Result<Self> {
+        #[cfg(feature = "oracle")]
+        {
+            Ok(Self {
+                backend: crate::oracle::validate(&spec)?,
+            })
+        }
+        #[cfg(not(feature = "oracle"))]
+        {
+            let _ = spec;
+            Err(Error::FeatureDisabled { feature: "oracle" })
         }
     }
 
@@ -495,6 +678,10 @@ impl Collation {
             Backend::MysqlUca(spec) => Ok(crate::mysql::compare(spec, a, b)),
             #[cfg(not(feature = "mysql-uca"))]
             Backend::MysqlUca(_) => unreachable!("mysql backend cannot be constructed"),
+            #[cfg(feature = "oracle-uca")]
+            Backend::Oracle(spec) => crate::oracle::compare(spec, a, b),
+            #[cfg(not(feature = "oracle-uca"))]
+            Backend::Oracle(_) => unreachable!("oracle backend cannot be constructed"),
         }
     }
 
@@ -515,6 +702,7 @@ impl Collation {
             Backend::Binary => Ok(Self::binary()),
             Backend::PostgresIcu(spec) => Self::postgres(spec),
             Backend::MysqlUca(spec) => Self::mysql(spec),
+            Backend::Oracle(spec) => Self::oracle(spec),
         }
     }
 }

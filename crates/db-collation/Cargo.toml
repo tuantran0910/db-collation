@@ -32,6 +32,12 @@ postgres-icu = ["dep:rust_icu_sys", "dep:rust_icu_ucol"]
 # Optional serde support for collation descriptions.
 serde = ["dep:serde"]
 
+# Oracle `NLS_SORT=BINARY` (bytewise; no table dependency).
+oracle = []
+
+# Oracle `UCA*_DUCET` collations (generated DUCET tables + version-pinned NFD).
+oracle-uca = ["oracle"]
+
 [dependencies]
 rust_icu_sys = { workspace = true, optional = true }
 rust_icu_ucol = { workspace = true, optional = true }
@@ -48,7 +54,11 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [package.metadata.cargo-all-features]
 denylist = []
-skip_feature_sets = [["mysql-uca"], ["postgres-icu", "mysql-uca"]]
+skip_feature_sets = [
+    ["mysql-uca"],
+    ["postgres-icu", "mysql-uca"],
+    ["oracle", "oracle-uca"],
+]
 
 [[example]]
 name = "basic_mysql"
@@ -57,6 +67,10 @@ required-features = ["mysql-uca"]
 [[example]]
 name = "postgres_icu"
 required-features = ["postgres-icu"]
+
+[[example]]
+name = "oracle_uca"
+required-features = ["oracle-uca"]
 
 [[bench]]
 name = "compare"
@@ -67,3 +81,8 @@ required-features = ["mysql-uca"]
 name = "postgres"
 harness = false
 required-features = ["postgres-icu"]
+
+[[bench]]
+name = "oracle"
+harness = false
+required-features = ["oracle-uca"]

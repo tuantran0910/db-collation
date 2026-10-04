@@ -153,6 +153,13 @@ fn build(spec: &Spec) -> Result<Collation, BuildError> {
         }
         "mysql" => Collation::from_mysql_name_unspecified_version(&spec.collation)
             .map_err(|e| BuildError::Refused(e.to_string())),
+        "oracle" => {
+            // Oracle collations are resolved by `NLS_SORT` name on an AL32UTF8
+            // `VARCHAR2`; unsupported names are refused by the library.
+            let description =
+                db_collation::OracleCollation::from_nls_sort(spec.collation.clone(), "AL32UTF8");
+            Collation::oracle(description).map_err(|e| BuildError::Refused(e.to_string()))
+        }
         other => Err(BuildError::Invalid(format!("unknown engine: {other}"))),
     }
 }
@@ -160,10 +167,40 @@ fn build(spec: &Spec) -> Result<Collation, BuildError> {
 /// The collation data version the library would use for a spec, for the harness
 /// to assert against the source's reported version.
 fn report_version(spec: &Spec) -> Option<String> {
-    if spec.engine == "postgres" {
-        db_collation::collation_version(&spec.collation)
+    match spec.engine.as_str() {
+        "postgres" => db_collation::collation_version(&spec.collation),
+        // Oracle's UCA data version is carried by the resolved description, so
+        // the reported string is exactly the crate's canonical version token.
+        "oracle" => {
+            db_collation::OracleCollation::from_nls_sort(spec.collation.clone(), "AL32UTF8")
+                .uca_version()
+                .map(|v| v.version_id().as_str().to_owned())
+        }
+        _ => None,
+    }
+}
+
+/// Why ordering the corpus failed.
+enum OrderError {
+    /// A comparison legitimately cannot be made for this input (e.g. the input
+    /// exceeds a documented backend limit). This is an expected fallback, not a
+    /// defect.
+    Fallback(String),
+    /// A runtime comparison failure: always a defect.
+    Defect(String),
+}
+
+/// Classify a library error raised during a comparison.
+///
+/// Only a documented per-input limit is an expected fallback. Every other
+/// runtime error -- including `Unsupported` surfaced during a comparison, a
+/// version mismatch, or a disabled feature -- is a defect for a collation the
+/// candidate already built.
+fn classify_error(e: &db_collation::Error) -> OrderError {
+    if matches!(e, db_collation::Error::InputLimit { .. }) {
+        OrderError::Fallback(e.to_string())
     } else {
-        None
+        OrderError::Defect(e.to_string())
     }
 }
 
@@ -174,16 +211,30 @@ fn report_version(spec: &Spec) -> Option<String> {
 fn order_and_rank(
     collation: &Collation,
     corpus: &[Scenario],
-) -> Result<(Vec<i64>, BTreeMap<i64, i64>), String> {
+) -> Result<(Vec<i64>, BTreeMap<i64, i64>), OrderError> {
     let strings: HashMap<i64, &str> = corpus.iter().map(|s| (s.id, s.s.as_str())).collect();
-    let failure: RefCell<Option<String>> = RefCell::new(None);
+    let failure: RefCell<Option<OrderError>> = RefCell::new(None);
+
+    let classify = classify_error;
+
+    // A fallback (e.g. an over-length input) makes the comparison non-transitive:
+    // the offending string can only be reported as equal, which Rust's sort
+    // rejects. Detect it up front by comparing every string against the first,
+    // which surfaces any per-input fallback before sorting.
+    if let Some(anchor) = corpus.first() {
+        for s in corpus.iter().skip(1) {
+            if let Err(e) = collation.compare(anchor.s.as_str(), s.s.as_str()) {
+                return Err(classify(&e));
+            }
+        }
+    }
 
     let compare = |x: i64, y: i64| -> Ordering {
         match collation.compare(strings[&x], strings[&y]) {
             Ok(Ordering::Equal) => x.cmp(&y),
             Ok(ord) => ord,
             Err(e) => {
-                *failure.borrow_mut() = Some(e.to_string());
+                *failure.borrow_mut() = Some(classify(&e));
                 Ordering::Equal
             }
         }
@@ -191,17 +242,17 @@ fn order_and_rank(
 
     let mut ids: Vec<i64> = corpus.iter().map(|s| s.id).collect();
     ids.sort_by(|&x, &y| compare(x, y));
-    if let Some(e) = failure.borrow().as_ref() {
-        return Err(e.clone());
+    if let Some(e) = failure.borrow_mut().take() {
+        return Err(e);
     }
 
-    let equal: RefCell<Option<String>> = RefCell::new(None);
+    let equal: RefCell<Option<OrderError>> = RefCell::new(None);
     let is_equal = |x: i64, y: i64| -> bool {
         match collation.compare(strings[&x], strings[&y]) {
             Ok(Ordering::Equal) => true,
             Ok(_) => false,
             Err(e) => {
-                *equal.borrow_mut() = Some(e.to_string());
+                *equal.borrow_mut() = Some(classify(&e));
                 false
             }
         }
@@ -215,8 +266,8 @@ fn order_and_rank(
         }
         rank.insert(id, current);
     }
-    if let Some(e) = equal.borrow().as_ref() {
-        return Err(e.clone());
+    if let Some(e) = equal.borrow_mut().take() {
+        return Err(e);
     }
     Ok((ids, rank))
 }
@@ -244,9 +295,15 @@ fn run(corpus_path: &str, specs_path: &str, out_path: &str) -> Result<(), String
                     outcome: Outcome::Ok,
                     note: String::new(),
                 }),
-                // A comparison error after successful construction is a
-                // backend failure, not a refusal: mark it `Error`.
-                Err(e) => out.push(Out::error(spec, format!("compare failed: {e}"))),
+                // A comparison that legitimately cannot be made (a documented
+                // backend limit) is a clean fallback, not a defect. Any other
+                // runtime comparison failure is a defect and marked `Error`.
+                Err(OrderError::Fallback(e)) => {
+                    out.push(Out::refused(spec, format!("fallback: {e}")));
+                }
+                Err(OrderError::Defect(e)) => {
+                    out.push(Out::error(spec, format!("compare failed: {e}")));
+                }
             },
             // A malformed spec is a harness defect, not a collation refusal.
             Err(BuildError::Invalid(e)) => out.push(Out::error(spec, e)),
@@ -272,5 +329,49 @@ fn main() -> ExitCode {
             eprintln!("{program}: error: {e}");
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{OrderError, classify_error};
+    use db_collation::Error;
+
+    #[test]
+    fn test_input_limit_is_the_only_accepted_fallback() {
+        // A per-input limit is the sole error that means "fall back for this
+        // input on a supported configuration".
+        let e = Error::InputLimit {
+            engine: "oracle",
+            reason: "too long",
+        };
+        assert!(matches!(classify_error(&e), OrderError::Fallback(_)));
+    }
+
+    #[test]
+    fn test_arbitrary_runtime_error_is_a_defect() {
+        // A comparison-time `Unsupported` (e.g. an injected arbitrary failure)
+        // must never be accepted as an expected fallback: it would let a whole
+        // spec pass without ever validating a comparison.
+        let e = Error::Unsupported {
+            engine: "oracle",
+            collation: "UCA1210_DUCET".to_owned(),
+            reason: "arbitrary runtime failure",
+        };
+        assert!(matches!(classify_error(&e), OrderError::Defect(_)));
+    }
+
+    #[test]
+    fn test_version_and_feature_errors_are_defects() {
+        use db_collation::VersionId;
+        let v = Error::VersionMismatch {
+            source: VersionId::new("1".to_owned()),
+            local: VersionId::new("2".to_owned()),
+        };
+        assert!(matches!(classify_error(&v), OrderError::Defect(_)));
+        let f = Error::FeatureDisabled {
+            feature: "oracle-uca",
+        };
+        assert!(matches!(classify_error(&f), OrderError::Defect(_)));
     }
 }

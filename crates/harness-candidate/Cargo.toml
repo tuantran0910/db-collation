@@ -26,7 +26,7 @@ name = "harness-candidate"
 path = "src/main.rs"
 
 [dependencies]
-db-collation = { workspace = true, features = ["postgres-icu", "mysql-uca"] }
+db-collation = { workspace = true, features = ["postgres-icu", "mysql-uca", "oracle-uca"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 

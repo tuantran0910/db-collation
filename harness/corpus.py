@@ -197,6 +197,29 @@ def generate(seed: int = 20261003, scale: float = 1.0) -> list:
     ]:
         add("contraction", s)
 
+    # Discontiguous contractions (UTS #10): a contraction may match across
+    # intervening non-starters whose combining class is lower than the mark that
+    # completes it, and this must reproduce Oracle exactly. The blocking cases
+    # keep the mark as separate so the two strings differ.
+    for s in [
+        "\u0438\u0591\u0306a",  # и + U+0591(220) + breve(230) + a
+        "\u0418\u0591\u0306a",  # uppercase
+        "\u0627\u0591\u0653a",  # Arabic alef + U+0591 + madda
+        "\u0627\u0591\u0654a",  # Arabic alef + U+0591 + hamza
+        "\u0648\u0591\u0654a",  # Arabic waw + U+0591 + hamza
+        "\u0438\u0061\u0306",  # starter blocks -> no match
+        "\u0438\u0308\u0306",  # equal/higher class blocks
+        "\u0438\u034f\u0306",  # CGJ blocks
+        # A consumed mark must not participate in a second contraction (Tibetan
+        # repeated non-starters): Oracle emits the first contraction followed by
+        # the remaining mark.
+        "\u0f71\u0f71\u0f72",
+        "\u0f71\u0f72\u0f72",
+        "\u0fb2\u0fb2\u0f72\u0f71\u0f71",
+        "\u0fb2\u0fb2\u0f71\u0f72\u0f72",
+    ]:
+        add("discontiguous", s)
+
     for s in [
         "0",
         "1",

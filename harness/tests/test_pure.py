@@ -12,7 +12,13 @@ from typing import ClassVar
 from harness.corpus import category_counts, generate
 from harness.differ import compare
 from harness.model import OrderResult, Outcome, Scenario, Spec
-from harness.runner import attach_acceptance, candidate_image_tag, container_name, safe_label
+from harness.runner import (
+    attach_acceptance,
+    candidate_image_tag,
+    container_name,
+    safe_label,
+    supported_refusal_is_a_failure,
+)
 
 
 class TestCorpus(unittest.TestCase):
@@ -190,6 +196,114 @@ class TestWeightDrift(unittest.TestCase):
             a.write_text(self._sample())
             b.write_text(self._sample().replace("cp as usize", "cp as usize + 1", 1))
             self.assertFalse(_same_source(a, b))
+
+    def _emit_oracle(self, tmp, name, uca, doc, han_core):
+        from harness import gen_uca
+
+        dst = Path(tmp) / name
+        gen_uca.emit(
+            "allkeys-12.1.0.txt" if uca == "12.1.0" else "allkeys-7.0.0.txt",
+            dst,
+            uca,
+            doc,
+            han_core,
+        )
+        return dst
+
+    def test_oracle_generated_tables_match_committed(self):
+        # The committed Oracle tables must equal a fresh generation. This is the
+        # ongoing regression guard for the Oracle generator, normalization data,
+        # implicit ranges and Han intervals.
+        from harness import gen_uca
+        from harness.check_weights import ORACLE_DIR, _same_source
+
+        with tempfile.TemporaryDirectory() as tmp:
+            t1210 = self._emit_oracle(
+                tmp,
+                "table_uca1210.rs",
+                "12.1.0",
+                "Unicode Collation Algorithm 12.1.0 DUCET (Oracle `UCA1210_DUCET`).",
+                gen_uca.HAN_CORE_1210,
+            )
+            t0700 = self._emit_oracle(
+                tmp,
+                "table_uca0700.rs",
+                "7.0.0",
+                "Unicode Collation Algorithm 7.0.0 DUCET (Oracle `UCA0700_DUCET`).",
+                gen_uca.HAN_CORE_0700,
+            )
+            self.assertTrue(_same_source(ORACLE_DIR / "table_uca1210.rs", t1210))
+            self.assertTrue(_same_source(ORACLE_DIR / "table_uca0700.rs", t0700))
+
+    def test_oracle_han_range_edit_is_detected(self):
+        # A tampered Han interval must produce a table that differs from the
+        # committed one: the drift check must flag it.
+        from harness import gen_uca
+        from harness.check_weights import ORACLE_DIR, _same_source
+
+        with tempfile.TemporaryDirectory() as tmp:
+            extended = [*gen_uca.HAN_CORE_1210, (0x3134B, 0x3134F)]
+            tampered = self._emit_oracle(
+                tmp,
+                "table_uca1210.rs",
+                "12.1.0",
+                "Unicode Collation Algorithm 12.1.0 DUCET (Oracle `UCA1210_DUCET`).",
+                extended,
+            )
+            self.assertFalse(_same_source(ORACLE_DIR / "table_uca1210.rs", tampered))
+
+    def test_oracle_implicit_range_edit_is_detected(self):
+        # Changing the injected implicit ranges must change the generated table.
+        from unittest import mock
+
+        from harness import gen_uca
+        from harness.check_weights import ORACLE_DIR, _same_source
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(gen_uca, "ORACLE_IMPLICIT_RANGES", [(0x17000, 0x18AFF, 0xFB02)]):
+                tampered = self._emit_oracle(
+                    tmp,
+                    "table_uca1210.rs",
+                    "12.1.0",
+                    "Unicode Collation Algorithm 12.1.0 DUCET (Oracle `UCA1210_DUCET`).",
+                    gen_uca.HAN_CORE_1210,
+                )
+            self.assertFalse(_same_source(ORACLE_DIR / "table_uca1210.rs", tampered))
+
+    def test_oracle_normalization_data_edit_is_detected(self):
+        # Repinning the normalization UnicodeData must change the generated
+        # table (the decomposition/combining-class arrays).
+        from unittest import mock
+
+        from harness import gen_uca
+        from harness.check_weights import ORACLE_DIR, _same_source
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(gen_uca, "NORMALIZATION_DATA", "UnicodeData-12.1.0.txt"):
+                tampered = self._emit_oracle(
+                    tmp,
+                    "table_uca1210.rs",
+                    "12.1.0",
+                    "Unicode Collation Algorithm 12.1.0 DUCET (Oracle `UCA1210_DUCET`).",
+                    gen_uca.HAN_CORE_1210,
+                )
+            self.assertFalse(_same_source(ORACLE_DIR / "table_uca1210.rs", tampered))
+
+
+class TestOracleFallbackContract(unittest.TestCase):
+    """A supported configuration must never pass by refusing the whole corpus.
+
+    The runner accepts a candidate refusal only for a spec that is *expected* to
+    be unsupported. A supported spec that merely reports a per-input fallback for
+    every string must be a failure, otherwise a broken candidate could look green
+    without a single comparison.
+    """
+
+    def test_supported_spec_refusal_is_a_failure(self):
+        self.assertFalse(supported_refusal_is_a_failure(True))
+
+    def test_expected_unsupported_spec_refusal_is_ok(self):
+        self.assertTrue(supported_refusal_is_a_failure(False))
 
 
 class TestDiffer(unittest.TestCase):
@@ -440,6 +554,38 @@ class TestImageNaming(unittest.TestCase):
         self.assertEqual(len(names), 20)
         for name in names:
             self.assertLessEqual(len(name), 63)
+
+
+class TestOracleMatrix(unittest.TestCase):
+    """The Oracle matrix must separate modelled collations from refusals.
+
+    Structural only (no database): every supported name is a resolved
+    `NLS_SORT` the crate claims exact support for, and every unsupported name is
+    one Oracle offers but the crate refuses.
+    """
+
+    def test_supported_names_are_the_modelled_set(self):
+        from harness import matrix
+
+        self.assertEqual(matrix.ORACLE_SUPPORTED, ["BINARY", "UCA1210_DUCET", "UCA0700_DUCET"])
+        ids = {s.id for s in matrix.ORACLE_SPECS if s.supported}
+        self.assertEqual(ids, {"or-" + c for c in matrix.ORACLE_SUPPORTED})
+
+    def test_refused_names_cover_each_refusal_family(self):
+        from harness import matrix
+
+        refused = set(matrix.ORACLE_UNSUPPORTED)
+        for name in ["GERMAN", "GENERIC_M", "BINARY_CI", "UCA1210_ROOT", "UCA1210_ORADUCET"]:
+            self.assertIn(name, refused)
+        ids = {s.id for s in matrix.ORACLE_SPECS if not s.supported}
+        self.assertEqual(ids, {"or-" + c for c in matrix.ORACLE_UNSUPPORTED})
+
+    def test_oracle_image_is_digest_pinned(self):
+        from harness import matrix
+
+        self.assertTrue(matrix.ORACLE_IMAGES)
+        for image in matrix.ORACLE_IMAGES:
+            self.assertIn("@sha256:", image)
 
 
 if __name__ == "__main__":

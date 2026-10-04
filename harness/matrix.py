@@ -65,3 +65,38 @@ PG_IMAGES = [
 #   {"postgres:15-bullseye": ("debian/snapshot:bullseye", "bullseye")}
 PG_BUILDER_IMAGE: dict[str, tuple[str, str]] = {}
 MYSQL_IMAGES = ["mysql:8.0", "mysql:8.4", "mysql:9.4"]
+
+# Oracle 23.5 Free (ARM). The crate reproduces exactly three resolved `NLS_SORT`
+# values on an `AL32UTF8` `VARCHAR2`: `BINARY` (bytewise — the binary backend)
+# and the two open-table DUCET collations. Every other collation Oracle offers is
+# refused: monolingual / multilingual (`_M`), `BINARY_CI`/`BINARY_AI`
+# (nondeterministic), `*_ROOT`/`*_ORADUCET` (deviate from the open DUCET tables),
+# and the tailored UCA collations.
+ORACLE_SUPPORTED = ["BINARY", "UCA1210_DUCET", "UCA0700_DUCET"]
+ORACLE_UNSUPPORTED = [
+    "GERMAN",
+    "XDANISH",
+    "GENERIC_M",
+    "FRENCH_M",
+    "BINARY_CI",
+    "BINARY_AI",
+    "UCA1210_ROOT",
+    "UCA1210_ORADUCET",
+    "UCA1210_SPANISH",
+    "UCA0700_ROOT",
+]
+
+# Oracle `NLS_SORT` names are case-insensitive; the crate normalizes them.
+ORACLE_SPECS = [Spec("or-" + c, "oracle", c, True, supported=True) for c in ORACLE_SUPPORTED] + [
+    Spec("or-" + c, "oracle", c, True, supported=False) for c in ORACLE_UNSUPPORTED
+]
+
+# Pinned by digest so the DUCET data version under test cannot drift silently.
+# `gvenzl/oracle-free:23.5-slim` (Oracle Database 23ai Free 23.5.0.24.07) is a
+# Docker Hub multi-arch index: `linux/amd64` and `linux/arm64` resolve to the
+# same build, so the harness runs natively on x86_64 CI runners and on Apple
+# silicon alike. The digest pins the index, not a single platform's manifest.
+ORACLE_IMAGES = [
+    "gvenzl/oracle-free:23.5-slim"
+    "@sha256:93f68828039fd15fcd9fb58090535c13df8f38ea2afc63feb2010d8ca3cd947c",
+]

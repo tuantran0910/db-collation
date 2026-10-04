@@ -86,6 +86,65 @@ collation (`utf8mb4_unicode_ci`, UCA 4.0.0) is already covered by the 8.0/8.4/9.
 runs. 5.7's other common collation, `utf8mb4_general_ci`, is non-UCA and is
 refused.
 
+## Oracle
+
+Oracle selects a collation by **name** through `NLS_SORT`. Only two families are
+reproducible; everything else is refused.
+
+| `NLS_SORT` | Backend | Notes |
+|---|---|---|
+| `BINARY` | binary | bytewise on the `AL32UTF8` bytes |
+| `UCA1210_DUCET` | UCA | Unicode 12.1.0 DUCET, Oracle defaults |
+| `UCA0700_DUCET` | UCA | Unicode 7.0.0 DUCET, Oracle defaults |
+
+### Supported
+
+- `NLS_SORT=BINARY` on an `AL32UTF8` `VARCHAR2` — bytewise, i.e. the binary
+  backend.
+- `UCA1210_DUCET` / `UCA0700_DUCET` on an `AL32UTF8` `VARCHAR2` — the Unicode
+  Collation Algorithm over the **open** Unicode DUCET tables, using Oracle's
+  default parameters `_S4_VS_BN_NY_EN_FN_HN_DN_MN`: quaternary strength,
+  **shifted variable** weighting, **discontiguous** contraction matching,
+  **NFD** normalization pinned to Oracle's fixed Unicode 15.0 normalization data
+  (independent of the DUCET weight-table version), forward levels, and no
+  `identical` level.
+
+### Refused
+
+- Monolingual (`GERMAN`, `XDANISH`, …) and multilingual (`GENERIC_M`,
+  `FRENCH_M`, …) collations — Oracle-proprietary locale data that is neither
+  documented nor redistributable.
+- `BINARY_CI` / `BINARY_AI` — nondeterministic, so they do not define a total
+  order.
+- `*_ROOT` / `*_ORADUCET` — Oracle's roots deviate from the open DUCET tables
+  at specific code points (e.g. `U+321D`, `U+337F`, `U+FDFA`, `U+FDFB`).
+- Tailored UCA collations (`UCA1210_SPANISH`, …) — not modelled.
+- `UCA0610`, `UCA0620`, and every other `NLS_SORT` name.
+- Any character set other than `AL32UTF8` (`WE8ISO8859P1`, `AL16UTF16`/`NCHAR`,
+  …).
+- Blank-padded `CHAR`/`NCHAR` sources; only `VARCHAR2` (nonpadded) is modelled.
+
+### Input-length limit
+
+Oracle caps its UCA sort key at **2000 bytes**; past that it truncates the key
+and the comparison is no longer pure DUCET. The library refuses (with
+`Error::InputLimit`) any input whose DUCET collation-element count could produce
+a key at least that long, so the caller falls back to the source for that input
+rather than receive a wrong order. Unlike `Error::Unsupported`, `InputLimit`
+means the *configuration* is supported — only this input is out of range. The
+bound is deliberately conservative (it may refuse a little earlier than Oracle's
+true limit); over-refusal is permitted by "exact, or refuse", under-refusal is
+not. `MAX_STRING_SIZE=EXTENDED` sources (32767-byte `VARCHAR2`) are still
+handled with this conservative 2000-byte policy.
+
+### Version identity
+
+Oracle identifies the UCA data version through the `NLS_SORT` name itself
+(`UCA1210` → Unicode 12.1.0, `UCA0700` → Unicode 7.0.0); there is no runtime
+version token like PostgreSQL's `collversion`. The library exposes the canonical
+token as `OracleUcaVersion::version_id` and the differential harness asserts the
+candidate reproduces it.
+
 ## Binary
 
 Bytewise comparison is always available and is exact for PostgreSQL `C`/`POSIX`
@@ -100,6 +159,7 @@ PAD SPACE; that collation is refused.
 | PostgreSQL | 14, 15, 16, 17, 18 | 76 |
 | PostgreSQL | 15-bookworm | 72 |
 | MySQL | 8.0, 8.4, 9.4 | — |
+| Oracle | 23.5 Free | — |
 
 Result: 0 mismatches. `postgres:15-bullseye` (ICU 67) is excluded because
 Debian 11 is EOL and no longer buildable from live mirrors; see

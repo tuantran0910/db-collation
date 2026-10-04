@@ -25,8 +25,8 @@ DOCKERFILES := $(shell find . -iname '*dockerfile*' -not -path './target/*' -not
 
 .DEFAULT_GOAL := help
 .PHONY: help fmt fmt-check clippy check check-all test test-all doc doc-open \
-	build build-release deny msrv ci ci-full audit outdated clean clean-all \
-	harness harness-bmp deep gen-weights check-weights-drift candidate candidate-image \
+	build build-release deny msrv ci ci-full check-features audit outdated clean clean-all \
+	harness harness-bmp harness-oracle deep gen-weights gen-uca check-weights-drift candidate candidate-image \
 	release-check release-notes \
 	unit integration bench example venv \
 	py-fmt py-fmt-check py-lint py-fix py-test \
@@ -46,6 +46,16 @@ fmt-check: ## Check formatting (CI)
 
 clippy: ## Lint all targets and features, deny warnings
 	$(CARGO) clippy $(WORKSPACE) --all-targets --all-features -- -D warnings
+
+# Isolated feature combinations that must lint on their own. Workspace feature
+# unification can otherwise hide dead code or broken cfg that only appears for a
+# single feature (e.g. a helper used solely under `oracle-uca`).
+check-features: ## Lint each isolated db-collation feature combo, deny warnings
+	$(CARGO) clippy -p db-collation --all-targets --no-default-features -- -D warnings
+	$(CARGO) clippy -p db-collation --all-targets --no-default-features --features oracle -- -D warnings
+	$(CARGO) clippy -p db-collation --all-targets --no-default-features --features oracle-uca -- -D warnings
+	$(CARGO) clippy -p db-collation --all-targets --no-default-features --features mysql-uca -- -D warnings
+	$(CARGO) clippy -p db-collation --all-targets --no-default-features --features postgres-icu -- -D warnings
 
 ## --- Checking and building -------------------------------------------------
 
@@ -140,14 +150,14 @@ docker-lint: ## Lint Dockerfiles (CI)
 # What CI runs on every change: formatting, lints, tests, docs, Python, and
 # Dockerfile checks. This does NOT run the Docker differential matrix, the
 # feature matrix, MSRV, or cargo-deny (CI runs those as separate jobs).
-ci: fmt-check clippy test-all doc py-fmt-check py-lint py-test docker-fmt-check docker-lint ## Fast checks CI runs (no Docker/DB)
+ci: fmt-check clippy check-features test-all doc py-fmt-check py-lint py-test docker-fmt-check docker-lint ## Fast checks CI runs (no Docker/DB)
 
 # The Docker-free portion of everything CI runs: the fast suite plus MSRV,
 # cargo-deny, and the weight-table drift check. It deliberately excludes the
 # Docker differential harness, the full-BMP sweep, and the isolated feature
 # matrix, which need Docker and/or extra toolchains (run `make harness`,
 # `make harness-bmp`, and the per-feature checks separately).
-ci-full: ci msrv deny check-weights-drift ## Fast suite + MSRV, deny, drift (no Docker/DB)
+ci-full: ci msrv deny check-weights-drift ## Fast suite + MSRV, deny, drift, isolated features (no Docker/DB)
 
 ## --- Harness and data ------------------------------------------------------
 
@@ -157,7 +167,10 @@ harness: candidate ## Run the Docker differential matrix (builds the host candid
 harness-bmp: candidate ## Full-BMP direct-operator sweep vs MySQL (MYSQL_IMAGE, default mysql:8.4)
 	$(HARNESS_PY) -m harness.bmp_sweep --image $(or $(MYSQL_IMAGE),mysql:8.4)
 
-deep: harness harness-bmp ## Full matrix plus the full-BMP sweep (slow; needs Docker)
+harness-oracle: candidate ## Differential matrix vs live Oracle Free (needs Docker)
+	$(HARNESS_PY) -m harness.run --engine oracle --out /private/tmp/harness-oracle.json
+
+deep: harness harness-bmp harness-oracle ## Full matrix plus BMP and Oracle sweeps (slow; needs Docker)
 
 candidate: ## Build the candidate binary on the host (real crate)
 	$(CARGO) build --release -p harness-candidate
@@ -167,6 +180,9 @@ candidate-image: ## Build the candidate image for IMAGE (default postgres:16)
 
 gen-weights: ## Regenerate MySQL weight tables from harness/data
 	$(HARNESS_PY) harness/gen_weights.py
+
+gen-uca: ## Regenerate Oracle DUCET tables from harness/data
+	$(HARNESS_PY) -m harness.gen_uca
 
 check-weights-drift: ## Fail if regenerating the weight tables changes them (CI)
 	$(HARNESS_PY) -m harness.check_weights

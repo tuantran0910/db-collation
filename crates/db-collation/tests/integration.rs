@@ -179,6 +179,25 @@ fn test_deserialize_rejects_backend_when_disabled() {
     assert!(serde_json::from_str::<Collation>(json).is_err());
 }
 
+#[cfg(all(feature = "serde", feature = "oracle"))]
+#[test]
+fn test_oracle_collation_is_serializable() {
+    use db_collation::OracleCollation;
+    let c = Collation::oracle(OracleCollation::binary()).unwrap();
+    let json = serde_json::to_string(&c).unwrap();
+    let back: Collation = serde_json::from_str(&json).unwrap();
+    assert_eq!(c, back);
+}
+
+#[cfg(feature = "serde")]
+#[test]
+fn test_deserialize_rejects_unsupported_oracle() {
+    // A description naming an unsupported Oracle collation must not deserialize
+    // into a usable `Collation`, even though the JSON is well-formed.
+    let json = r#"{"Oracle":{"provider":"Uca","nls_sort":"UCA1210_ROOT","uca_version":"Uca1210","charset":"AL32UTF8","blank_padded":false}}"#;
+    assert!(serde_json::from_str::<Collation>(json).is_err());
+}
+
 #[cfg(feature = "postgres-icu")]
 mod postgres {
     use std::cmp::Ordering;
@@ -250,5 +269,242 @@ mod postgres {
         for h in handles {
             h.join().unwrap();
         }
+    }
+}
+
+#[cfg(feature = "oracle")]
+mod oracle {
+    use super::*;
+    #[cfg(feature = "oracle-uca")]
+    use db_collation::OracleUcaVersion;
+    use db_collation::{Error, OracleCollation};
+
+    #[test]
+    fn test_oracle_binary_is_bytewise() {
+        let c = Collation::oracle(OracleCollation::binary()).unwrap();
+        assert!(matches!(c.backend(), Backend::Binary));
+        assert_eq!(c.compare("A", "a").unwrap(), Ordering::Less);
+        assert_eq!(c.compare("Z", "a").unwrap(), Ordering::Less);
+        assert_eq!(c.compare("abc", "abd").unwrap(), Ordering::Less);
+    }
+
+    #[test]
+    fn test_oracle_linguistic_names_are_refused() {
+        // Monolingual, multilingual (`_M`), case/accent-insensitive binary, and
+        // the deviating `*_ROOT`/`*_ORADUCET` UCA collations are all refused.
+        for name in [
+            "GERMAN",
+            "XDANISH",
+            "GENERIC_M",
+            "FRENCH_M",
+            "BINARY_CI",
+            "BINARY_AI",
+            "UCA1210_ROOT",
+            "UCA1210_ORADUCET",
+            "UCA1210_SPANISH",
+            "UCA0700_ROOT",
+        ] {
+            let err =
+                Collation::oracle(OracleCollation::from_nls_sort(name, "AL32UTF8")).unwrap_err();
+            assert!(err.is_fallback_required(), "{name}");
+            assert!(matches!(err, Error::Unsupported { .. }), "{name}");
+        }
+    }
+
+    #[test]
+    fn test_oracle_non_utf8_and_blank_padded_are_refused() {
+        let bad = OracleCollation::from_nls_sort("BINARY", "WE8ISO8859P1");
+        assert!(Collation::oracle(bad).is_err());
+        let padded = OracleCollation::binary().with_blank_padded(true);
+        assert!(Collation::oracle(padded).is_err());
+    }
+
+    #[test]
+    #[cfg(feature = "oracle-uca")]
+    fn test_oracle_uca_ducet_semantics() {
+        let c = Collation::oracle(OracleCollation::uca_ducet(OracleUcaVersion::Uca1210)).unwrap();
+        // Lowercase before uppercase, accent as a lower level.
+        assert_eq!(c.compare("a", "A").unwrap(), Ordering::Less);
+        assert_eq!(c.compare("a", "á").unwrap(), Ordering::Less);
+        // The eszett expands to two "s" primaries and differs from "ss" only at
+        // the secondary level.
+        assert_eq!(c.compare("ss", "ß").unwrap(), Ordering::Less);
+        assert_eq!(c.compare("strasse", "straße").unwrap(), Ordering::Less);
+    }
+
+    #[test]
+    #[cfg(feature = "oracle-uca")]
+    fn test_oracle_uca_long_input_is_refused() {
+        // Oracle caps its UCA sort key at 2000 bytes; beyond that it truncates
+        // the key and is no longer pure DUCET, so the crate must refuse the
+        // input rather than return a wrong order. This is a per-input limit on a
+        // *supported* configuration, so it is `InputLimit` (fall back for this
+        // input), not `Unsupported` (the whole configuration is refused).
+        let c = Collation::oracle(OracleCollation::uca_ducet(OracleUcaVersion::Uca1210)).unwrap();
+        let long_a = format!("{}a", "p".repeat(400));
+        let long_b = format!("{}b", "p".repeat(400));
+        let err = c.compare(&long_a, &long_b).unwrap_err();
+        assert!(err.is_fallback_required());
+        assert!(
+            matches!(err, Error::InputLimit { .. }),
+            "over-length must be a typed input limit, not a construction refusal: {err:?}"
+        );
+        // Short inputs of the same shape are exact.
+        assert_eq!(
+            c.compare("pa", "pb").unwrap(),
+            Ordering::Less,
+            "short prefix must still compare"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "oracle-uca")]
+    fn test_oracle_uca_nfd_matches_target_unicode_version() {
+        // U+00E5 (å) canonical-decomposes to U+0061 U+030A, and the DUCET is
+        // canonically closed, so the precomposed and decomposed forms compare
+        // equal. This exercises the pinned NFD.
+        let c = Collation::oracle(OracleCollation::uca_ducet(OracleUcaVersion::Uca1210)).unwrap();
+        assert!(c.equal("\u{e5}", "a\u{030a}").unwrap());
+        // A combining sequence is canonically reordered: U+0301 has class 230,
+        // U+0316 has class 220, so U+0316 must be ordered first.
+        assert!(c.equal("a\u{0316}\u{0301}", "a\u{0301}\u{0316}").unwrap());
+        // Normalization is pinned to Oracle's fixed Unicode version (15.0) for
+        // **both** UCA weight versions, not to the UCA version. U+11938 gained a
+        // decomposition in Unicode 13.0, so it decomposes here; a code point
+        // added later than 15.0 (U+105C9, Unicode 16) with a canonical
+        // decomposition must stay atomic and sort by its own implicit weight.
+        for version in [OracleUcaVersion::Uca1210, OracleUcaVersion::Uca700] {
+            let c = Collation::oracle(OracleCollation::uca_ducet(version)).unwrap();
+            assert!(
+                c.equal("\u{11938}", "\u{11935}\u{11930}").unwrap(),
+                "{version:?}: Unicode 13 decomposition must apply"
+            );
+            assert_eq!(
+                c.compare("\u{105c9}", "\u{105d0}").unwrap(),
+                Ordering::Less,
+                "{version:?}: post-15.0 code point must not be decomposed"
+            );
+            // U+07FD (combining class 220, Unicode 11.0) must be canonically
+            // reordered even under the 7.0 weight table: normalization does not
+            // follow the UCA version.
+            assert!(
+                c.equal("\u{0334}\u{07fd}", "\u{07fd}\u{0334}").unwrap(),
+                "{version:?}: normalization must not be pinned to the UCA version"
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "oracle-uca")]
+    fn test_oracle_uca_han_implicit_range_boundaries() {
+        // Oracle assigns Han implicit weights to the Extension G/H intervals
+        // U+30000..U+3134A and U+31350..U+323AF (verified against live Oracle),
+        // for both named UCA versions. The gap U+3134B..U+3134F and U+323B0
+        // onward are generic. Han primaries use `FB80 +`, which places them
+        // *before* the generic U+0378 (`FBC0 +`) even though their code points
+        // are larger.
+        for version in [OracleUcaVersion::Uca1210, OracleUcaVersion::Uca700] {
+            let c = Collation::oracle(OracleCollation::uca_ducet(version)).unwrap();
+            for cp in [0x30000, 0x3134A, 0x31350, 0x323AF] {
+                assert_eq!(
+                    c.compare(&char::from_u32(cp).unwrap().to_string(), "\u{378}")
+                        .unwrap(),
+                    Ordering::Less,
+                    "{version:?}: U+{cp:05X} is Han and must sort before U+0378"
+                );
+            }
+            for cp in [0x3134B, 0x3134F, 0x323B0] {
+                assert_eq!(
+                    c.compare(&char::from_u32(cp).unwrap().to_string(), "\u{378}")
+                        .unwrap(),
+                    Ordering::Greater,
+                    "{version:?}: U+{cp:05X} is in the generic gap and must sort after U+0378"
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "oracle-uca")]
+    fn test_oracle_uca_consumed_mark_does_not_match_again() {
+        // A mark consumed by a discontiguous contraction must not participate in
+        // a later match: it is removed from the stream, so the remaining marks
+        // become logically adjacent. Here the first Tibetan U+0F71 skips the
+        // second U+0F71 and takes the U+0F72 (ccc 130 > 129) as a discontiguous
+        // contraction; the second U+0F71 must then stand alone. Verified against
+        // live Oracle (source says Less for the pair below).
+        let left = "\u{0f71}\u{0f71}\u{0f72}";
+        let right = "\u{0f71}\u{0f72}\u{0f72}";
+        for version in [OracleUcaVersion::Uca1210, OracleUcaVersion::Uca700] {
+            let c = Collation::oracle(OracleCollation::uca_ducet(version)).unwrap();
+            assert_eq!(
+                c.compare(left, right).unwrap(),
+                Ordering::Less,
+                "{version:?}: a consumed mark must not match again"
+            );
+            // A longer witness from the overlap corpus.
+            assert_eq!(
+                c.compare(
+                    "\u{0fb2}\u{0fb2}\u{0f72}\u{0f71}\u{0f71}",
+                    "\u{0fb2}\u{0fb2}\u{0f71}\u{0f72}\u{0f72}"
+                )
+                .unwrap(),
+                Ordering::Less,
+                "{version:?}: repeated non-starter-leading contractions"
+            );
+        }
+    }
+
+    #[test]
+    fn test_oracle_is_send_sync() {
+        static_assertions::assert_impl_all!(Collation: Send, Sync);
+    }
+
+    #[test]
+    #[cfg(feature = "oracle-uca")]
+    fn test_oracle_uca_discontiguous_contraction_matches_across_lower_class_mark() {
+        // UTS #10: a contraction may match across intervening non-starters whose
+        // combining class is lower than the mark that completes it. Here the
+        // Cyrillic `и` + breve contraction (`0438 0306`) must be found even with
+        // U+0591 (class 220) between them, because U+0306 has class 230.
+        for version in [OracleUcaVersion::Uca1210, OracleUcaVersion::Uca700] {
+            let c = Collation::oracle(OracleCollation::uca_ducet(version)).unwrap();
+            assert!(
+                c.equal("\u{0439}a", "\u{0438}\u{0591}\u{0306}a").unwrap(),
+                "{version:?}: discontiguous Cyrillic contraction"
+            );
+            assert!(
+                c.equal("\u{0419}a", "\u{0418}\u{0591}\u{0306}a").unwrap(),
+                "{version:?}: discontiguous Cyrillic contraction (uppercase)"
+            );
+            // Arabic madda: `0627 0653` contraction across a skipped mark.
+            assert!(
+                c.equal("\u{0622}a", "\u{0627}\u{0591}\u{0653}a").unwrap(),
+                "{version:?}: discontiguous Arabic contraction"
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "oracle-uca")]
+    fn test_oracle_uca_discontiguous_contraction_respects_blocking() {
+        // A mark whose combining class is >= the target's blocks the match.
+        let c = Collation::oracle(OracleCollation::uca_ducet(OracleUcaVersion::Uca1210)).unwrap();
+        // A starter in between always blocks: U+0061 is a starter.
+        assert!(
+            !c.equal("\u{0439}", "\u{0438}\u{0061}\u{0306}").unwrap(),
+            "a starter must block discontiguous matching"
+        );
+        // A higher-class mark blocks the lower-class target (U+0308 has class 230).
+        assert!(
+            !c.equal("\u{0439}", "\u{0438}\u{0308}\u{0306}").unwrap(),
+            "a higher-class intervening mark must block"
+        );
+        // COMBINING GRAPHEME JOINER (U+034F) is a starter-like blocker even
+        // though it is otherwise completely ignorable.
+        assert!(
+            !c.equal("\u{0439}", "\u{0438}\u{034f}\u{0306}").unwrap(),
+            "CGJ must block discontiguous matching"
+        );
     }
 }

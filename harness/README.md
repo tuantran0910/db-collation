@@ -50,6 +50,7 @@ python -m harness.run --engine all --out report.json
 # subsets
 python -m harness.run --engine mysql          # host candidate, no image build
 python -m harness.run --images postgres:16    # one PG image
+python -m harness.run --engine oracle         # host candidate vs live Oracle
 
 # full-BMP direct-operator sweep: every BMP scalar plus implicit-range
 # boundary witnesses, checked against live MySQL (`make harness-bmp`)
@@ -75,10 +76,23 @@ the library never depends on them.
 | MySQL | 8.0, 8.4, 9.4 | 3 modelled | **all exact** |
 | MySQL | 8.0, 8.4, 9.4 | full BMP (63,498 scalars) | **all exact** |
 | MySQL | same | 7 tailored / other-UCA / `utf8mb4_bin` | **refused (fallback)** |
+| Oracle | 23.5 Free (`gvenzl/oracle-free`) | `BINARY`, `UCA1210_DUCET`, `UCA0700_DUCET` | **all exact** |
+| Oracle | same | 10 monolingual / `_M` / `BINARY_CI` / `*_ROOT` / tailored | **refused (fallback)** |
 
 The PostgreSQL candidate is built `FROM` each image, so it links that image's
 exact ICU data version; the harness asserts the candidate's reported version
-equals the server's `pg_collation_actual_version(oid)`.
+equals the server's `pg_collation_actual_version(oid)`. The MySQL and Oracle
+candidates run on the host, since their ordering is fixed by pinned weight tables
+rather than the host ICU.
+
+The Oracle oracle connects with `python-oracledb` in thin mode and orders the
+corpus with `NLSSORT(s, 'NLS_SORT=<name>')`, asserting the candidate reproduces
+the UCA version token. Empty strings are excluded (Oracle stores `''` as NULL)
+and the `long_prefix` class is excluded: Oracle truncates UCA sort keys past
+2000 bytes, which the crate refuses with `Error::InputLimit`. Because the corpus
+therefore contains no over-limit input, every *supported* Oracle spec must yield
+real comparisons — a candidate that only reports per-input fallbacks is a
+failure, not a pass (see `docs/CONFIGURATION.md`).
 
 ## Adding a configuration / candidate
 

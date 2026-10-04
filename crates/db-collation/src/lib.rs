@@ -28,7 +28,10 @@
 //!   matches the source database's comparison operator exactly (validated by the
 //!   differential harness in `harness/`). For anything not explicitly modelled,
 //!   construction returns [`Error::Unsupported`] and the caller should fall back
-//!   to comparing on the source database.
+//!   to comparing on the source database. A *supported* configuration can still
+//!   reject an individual input that exceeds a documented source limit (e.g.
+//!   Oracle's 2000-byte UCA sort key); that is [`Error::InputLimit`], and the
+//!   caller falls back for that input only.
 //! - **No approximation.** Selecting the same locale name is *not* sufficient:
 //!   ICU data versions change ordering (e.g. `あ` vs `U+11DB0` reversed between
 //!   ICU 76 and 78), and `MySQL` collations differ by UCA version, tailoring and
@@ -78,6 +81,9 @@ mod error;
 #[cfg(feature = "mysql-uca")]
 #[allow(unreachable_pub)]
 mod mysql;
+#[cfg(feature = "oracle")]
+#[allow(unreachable_pub)]
+mod oracle;
 #[cfg(feature = "postgres-icu")]
 #[allow(unreachable_pub)]
 mod postgres;
@@ -90,6 +96,6 @@ pub use error::{Error, Result};
 #[cfg(feature = "postgres-icu")]
 pub use postgres::{collation_version, icu_library_version};
 pub use spec::{
-    Backend, Collation, MysqlCollation, MysqlUcaVersion, Pad, PostgresCollation, PostgresProvider,
-    VersionId,
+    Backend, Collation, MysqlCollation, MysqlUcaVersion, OracleCollation, OracleProvider,
+    OracleUcaVersion, Pad, PostgresCollation, PostgresProvider, VersionId,
 };
