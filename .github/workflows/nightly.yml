@@ -31,7 +31,7 @@ jobs:
     name: cargo-deny advisories
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Advisories change without code changes, so re-check them on a schedule.
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
@@ -41,8 +41,8 @@ jobs:
     name: harness (all images)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install harness dependencies
@@ -55,7 +55,7 @@ jobs:
         run: python -m harness.run --engine all --out harness-report.json
       - name: Upload report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: nightly-harness-report
           path: harness-report.json
@@ -65,8 +65,8 @@ jobs:
     name: full-BMP sweep (MySQL)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install harness dependencies
