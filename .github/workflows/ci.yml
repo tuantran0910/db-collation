@@ -127,8 +127,14 @@ jobs:
         with:
           dockerfile: harness/candidate.Dockerfile
       - name: Check Dockerfile formatting
+        env:
+          DOCKERFMT_VERSION: v0.5.4
         run: |
-          curl -sSfL https://raw.githubusercontent.com/reteps/dockerfmt/main/install.sh | sh -s -- -b /usr/local/bin
+          # dockerfmt publishes release binaries (the old install.sh is gone).
+          # Pin the version so formatting cannot change under us.
+          curl -sSfL -o /tmp/dockerfmt.tar.gz \
+            "https://github.com/reteps/dockerfmt/releases/download/${DOCKERFMT_VERSION}/dockerfmt-${DOCKERFMT_VERSION}-linux-amd64.tar.gz"
+          tar -xzf /tmp/dockerfmt.tar.gz -C /usr/local/bin dockerfmt
           dockerfmt --check harness/candidate.Dockerfile
 
   docs:
