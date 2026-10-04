@@ -1,0 +1,21 @@
+[package]
+name = "db-collation-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+db-collation = { path = "../crates/db-collation", features = ["postgres-icu"] }
+
+[[bin]]
+name = "compare"
+path = "fuzz_targets/compare.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]

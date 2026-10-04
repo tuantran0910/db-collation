@@ -1,0 +1,79 @@
+[workspace]
+resolver = "3"
+members = ["crates/db-collation", "crates/harness-candidate"]
+exclude = ["harness", "fuzz"]
+default-members = ["crates/db-collation"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "Apache-2.0"
+repository = "https://github.com/tuantran0910/db-collation"
+homepage = "https://github.com/tuantran0910/db-collation"
+documentation = "https://docs.rs/db-collation"
+authors = ["db-collation contributors"]
+keywords = ["collation", "unicode", "icu", "mysql", "postgresql"]
+categories = ["text-processing", "database", "internationalization"]
+# Paths are relative to the member crate root. `cargo package` also always
+# includes the files referenced by `readme`/`license`, wherever they live.
+include = [
+    "/src/**/*.rs",
+    "/benches/**/*.rs",
+    "/examples/**/*.rs",
+    "/tests/**/*.rs",
+    "/LICENSE-APACHE",
+    "/THIRD-PARTY-NOTICES",
+    "/Cargo.toml",
+]
+
+[workspace.dependencies]
+db-collation = { version = "0.1.0", path = "crates/db-collation" }
+
+# Runtime dependencies
+rust_icu_sys = "5.8.0"
+rust_icu_ucol = "5.8.0"
+serde = { version = "1.0.219", features = ["derive"] }
+
+# Dev / test dependencies
+static_assertions = "1.1.0"
+criterion = { version = "0.7.0", default-features = false, features = ["cargo_bench_support"] }
+serde_json = "1.0.140"
+
+[workspace.lints.rust]
+missing_docs = "warn"
+missing_debug_implementations = "warn"
+missing_copy_implementations = "warn"
+unsafe_code = "deny"
+rust_2018_idioms = { level = "deny", priority = -1 }
+unreachable_pub = "warn"
+unused_qualifications = "warn"
+non_ascii_idents = "deny"
+single_use_lifetimes = "warn"
+trivial_casts = "warn"
+trivial_numeric_casts = "warn"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+
+# Pedantic lints that fight a library whose whole job is careful, explicit code.
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+redundant_pub_crate = "allow"
+# Transitive duplicate versions (e.g. `syn` 2 and 3 via unrelated proc-macro
+# dependencies of criterion/serde) are not actionable here; pinning another
+# crate's transitives would be worse than the duplicate.
+multiple_crate_versions = "allow"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+[profile.bench]
+lto = "thin"
+codegen-units = 1

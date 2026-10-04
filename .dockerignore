@@ -1,0 +1,14 @@
+# Keep the build context small and hermetic for harness/candidate.Dockerfile.
+.git/
+.gitignore
+target/
+**/target/
+.work/
+harness/.venv/
+**/__pycache__/
+*.pyc
+.ruff_cache/
+fuzz/corpus/
+fuzz/artifacts/
+harness-report.json
+*.log

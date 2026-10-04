@@ -1,0 +1,19 @@
+target/
+**/*.rs.bk
+*.pdb
+
+# macOS Finder metadata
+.DS_Store
+.work/
+__pycache__/
+harness/.venv/
+fuzz/target/
+fuzz/corpus/
+fuzz/artifacts/
+fuzz/Cargo.lock
+harness-report.json
+
+# Ruff / Python tooling
+.ruff_cache/
+*.pyc
+.pytest_cache/

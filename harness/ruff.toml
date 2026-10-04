@@ -1,0 +1,30 @@
+# Ruff configuration for the differential harness (a separate Python project).
+#
+# The harness is test tooling; the Rust crate is the product. Keep the Python
+# tidy and consistent, but do not over-restrict it.
+
+target-version = "py311"
+line-length = 100
+extend-exclude = [".venv", "__pycache__", ".work"]
+
+[lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade
+    "SIM", # flake8-simplify
+    "RUF", # ruff-specific
+]
+ignore = [
+    "E501",   # line length is handled by the formatter
+    "RUF001", # deliberately ambiguous Unicode is the point of a collation corpus
+    "RUF002", # ... including ambiguous characters in docstrings
+    "RUF003", # ... and in comments
+]
+
+[lint.per-file-ignores]
+# Generated weight tables are Rust, not Python; nothing to ignore there.
+"tests/*" = ["S101"]

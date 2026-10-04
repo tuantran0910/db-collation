@@ -1,0 +1,65 @@
+# Third-party notices
+
+`db-collation` is licensed under Apache-2.0 (see `LICENSE-APACHE`). It contains
+generated data derived from a third-party source, redistributed under its
+license as follows.
+
+## Unicode Collation Algorithm data
+
+The generated files `crates/db-collation/src/mysql/table_0400.rs` and
+`table_0900.rs` are derivative works of the Unicode Collation Algorithm (UCA)
+weight tables.
+
+- UCA 4.0.0: https://www.unicode.org/Public/UCA/4.0.0/allkeys-4.0.0.txt
+- UCA 9.0.0: https://www.unicode.org/Public/UCA/9.0.0/allkeys.txt
+- Copyright © Unicode, Inc. Licensed under the Unicode License v3
+  (SPDX: `Unicode-3.0`, https://www.unicode.org/license.txt).
+
+`harness/gen_weights.py` parses those files and derives MySQL's comparison
+weights (primary weights only; see `harness/data/PROVENANCE.md`). No third-party
+intermediate transcription is used.
+
+## Unicode License v3
+
+The Unicode data files above are provided under the following terms:
+
+> UNICODE LICENSE V3
+>
+> Copyright © 1991-2024 Unicode, Inc.
+>
+> NOTICE TO USER: Carefully read the following legal agreement. BY DOWNLOADING,
+> INSTALLING, COPYING OR OTHERWISE USING DATA FILES, AND/OR SOFTWARE, YOU
+> UNEQUIVOCALLY ACCEPT, AND AGREE TO BE BOUND BY, ALL OF THE TERMS AND
+> CONDITIONS OF THIS AGREEMENT. IF YOU DO NOT AGREE, DO NOT DOWNLOAD, INSTALL,
+> COPY, DISTRIBUTE OR USE THE DATA FILES OR SOFTWARE.
+>
+> Permission is hereby granted, free of charge, to any person obtaining a copy of
+> data files and any associated documentation (the "Data Files") or software and
+> any associated documentation (the "Software") to deal in the Data Files or
+> Software without restriction, including without limitation the rights to use,
+> copy, modify, merge, publish, distribute, and/or sell copies of the Data Files
+> or Software, and to permit persons to whom the Data Files or Software are
+> furnished to do so, provided that either (a) this copyright and permission
+> notice appear with all copies of the Data Files or Software, or (b) this
+> copyright and permission notice appear in associated Documentation.
+>
+> THE DATA FILES AND SOFTWARE ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+> EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+> MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT OF THIRD
+> PARTY RIGHTS. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR HOLDERS INCLUDED IN
+> THIS NOTICE BE LIABLE FOR ANY CLAIM, OR ANY SPECIAL INDIRECT OR CONSEQUENTIAL
+> DAMAGES, OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS,
+> WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING
+> OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THE DATA FILES OR
+> SOFTWARE.
+>
+> Except as contained in this notice, the name of a copyright holder shall not be
+> used in advertising or otherwise to promote the sale, use or other dealings in
+> these Data Files or Software without prior written authorization of the
+> copyright holder.
+
+## ICU4C
+
+The `postgres-icu` feature links ICU4C at build time through `rust_icu_*`. ICU is
+licensed under the Unicode License v3; it is not bundled and is provided by the
+host system.

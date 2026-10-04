@@ -1,0 +1,57 @@
+[graph]
+# A local-only library: it must never reach the network or a database.
+targets = []
+all-features = true
+
+[advisories]
+version = 2
+yanked = "deny"
+ignore = [
+    # `paste` is an unmaintained (not vulnerable) transitive dependency of
+    # `rust_icu_sys`, the ICU4C bindings behind the `postgres-icu` feature.
+    # There is no upgrade path until the ICU bindings migrate off it, and the
+    # code path is deterministic macro hygiene with no runtime input.
+    "RUSTSEC-2024-0436",
+]
+
+[licenses]
+version = 2
+# Permissive licenses only, matching the crate's Apache-2.0 license.
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    "0BSD",
+]
+confidence-threshold = 0.9
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+deny = [
+    # Database drivers: the library must never talk to a database.
+    { name = "reqwest" },
+    { name = "hyper" },
+    { name = "tokio-postgres" },
+    { name = "postgres" },
+    { name = "mysql" },
+    { name = "mysql_async" },
+    { name = "sqlx" },
+    { name = "rusqlite" },
+    # TLS stacks: no network I/O, so nothing should pull these in.
+    { name = "native-tls" },
+    { name = "openssl" },
+    { name = "openssl-sys" },
+    { name = "rustls" },
+    { name = "tokio-native-tls" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

@@ -1,0 +1,69 @@
+[package]
+name = "db-collation"
+description = "Offline, exact comparison of strings using an explicitly identified database collation and version."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+include.workspace = true
+readme = "../../README.md"
+
+[lints]
+workspace = true
+
+[features]
+default = ["mysql-uca"]
+
+# MySQL UCA weight-table backends (utf8mb4_0900_ai_ci, utf8mb4_unicode_ci, ...).
+mysql-uca = []
+
+# PostgreSQL ICU backend, linking ICU4C through `rust_icu_ucol`.
+# The caller is responsible for ensuring the linked ICU data version matches
+# the source database; the library validates the supplied version token at
+# runtime and refuses on mismatch.
+postgres-icu = ["dep:rust_icu_sys", "dep:rust_icu_ucol"]
+
+# Optional serde support for collation descriptions.
+serde = ["dep:serde"]
+
+[dependencies]
+rust_icu_sys = { workspace = true, optional = true }
+rust_icu_ucol = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+
+[dev-dependencies]
+static_assertions.workspace = true
+serde_json.workspace = true
+criterion.workspace = true
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[package.metadata.cargo-all-features]
+denylist = []
+skip_feature_sets = [["mysql-uca"], ["postgres-icu", "mysql-uca"]]
+
+[[example]]
+name = "basic_mysql"
+required-features = ["mysql-uca"]
+
+[[example]]
+name = "postgres_icu"
+required-features = ["postgres-icu"]
+
+[[bench]]
+name = "compare"
+harness = false
+required-features = ["mysql-uca"]
+
+[[bench]]
+name = "postgres"
+harness = false
+required-features = ["postgres-icu"]
