@@ -6,6 +6,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-04
+
 ### Changed
 
 - **Breaking:** `Collation::compare` and `Collation::equal` now return
@@ -116,5 +118,6 @@ Initial release.
   67/72/76) and MySQL 8.0/8.4/9.4, 0 mismatches.
 - Optional `serde` support for collation descriptions.
 
-[Unreleased]: https://github.com/tuantran0910/db-collation/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/tuantran0910/db-collation/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/tuantran0910/db-collation/releases/tag/v0.2.0
 [0.1.0]: https://github.com/tuantran0910/db-collation/releases/tag/v0.1.0
