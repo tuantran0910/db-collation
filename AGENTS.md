@@ -174,6 +174,14 @@ Publishing (OIDC, no stored token), and creates a GitHub Release from the
 changelog. See `docs/DEVELOPMENT.md`. Preview locally with `make release-check`
 and `make release-notes`.
 
+Pick the version with SemVer: while the crate is pre-1.0, a breaking API change
+bumps the **minor** (e.g. `0.1.0` → `0.2.0`), and additions/fixes bump the
+patch. The tag must equal the manifest version exactly.
+
+Trusted Publishing is a one-time prerequisite: the crate must be published
+manually once, and the crates.io Trusted Publisher (repository + workflow file)
+must be configured before the OIDC publish step will succeed.
+
 ## Commits and PRs
 
 - Conventional Commits, e.g. `fix(mysql): reproduce PAD SPACE padding`,
