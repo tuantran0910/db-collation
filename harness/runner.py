@@ -16,7 +16,7 @@ from pathlib import Path
 from .candidate import ContainerCandidate, HostCandidate
 from .differ import compare
 from .model import Outcome
-from .oracles import MySqlOracle, PostgresOracle, SourceUnsupported
+from .oracles import MySqlOracle, OracleOracle, PostgresOracle, SourceUnsupported
 
 HARNESS_DIR = Path(__file__).resolve().parent
 
@@ -170,6 +170,50 @@ def stop(name):
     sh(["docker", "rm", "-f", name])
 
 
+def start_oracle(image, name, port):
+    """Start the pinned Oracle Free image and wait for `FREEPDB1`.
+
+    `gvenzl/oracle-free` declares no Docker healthcheck; the database is created
+    on first boot by its entrypoint, which takes tens of seconds. Readiness is
+    probed directly with SQL*Plus inside the container until a query succeeds.
+    """
+    sh(["docker", "rm", "-f", name])
+    r = sh(
+        [
+            "docker",
+            "run",
+            "-d",
+            "--name",
+            name,
+            "-e",
+            "ORACLE_PASSWORD=cdc-review",
+            "-p",
+            f"127.0.0.1:{port}:1521",
+            image,
+        ]
+    )
+    if r.returncode != 0:
+        raise RuntimeError(r.stderr)
+    deadline = time.time() + 300
+    while time.time() < deadline:
+        probe = sh(
+            [
+                "docker",
+                "exec",
+                name,
+                "bash",
+                "-lc",
+                "echo 'select 1 from dual;' | sqlplus -S system/cdc-review@localhost:1521/FREEPDB1",
+            ]
+        )
+        # A ready database prints the value; a booting one prints an ORA- or
+        # connection error (or nothing).
+        if probe.returncode == 0 and "ORA-" not in probe.stdout and "1" in probe.stdout:
+            return
+        time.sleep(5)
+    raise RuntimeError("oracle did not become ready")
+
+
 def image_id(reference):
     """The immutable image ID (digest) for a reference, or None."""
     r = sh(["docker", "image", "inspect", "--format", "{{.Id}}", reference])
@@ -189,6 +233,18 @@ def server_version(container, engine):
                 "postgres",
                 "-tAc",
                 "SHOW server_version",
+            ]
+        )
+    elif engine == "oracle":
+        r = sh(
+            [
+                "docker",
+                "exec",
+                container,
+                "bash",
+                "-lc",
+                "echo 'select version_full from v$instance;' | "
+                "sqlplus -S system/cdc-review@localhost:1521/FREEPDB1",
             ]
         )
     else:
@@ -455,9 +511,149 @@ def run_mysql_image(image, corpus, specs, port=18306, keep=False):
     return report
 
 
+def supported_refusal_is_a_failure(expected_supported):
+    """Whether a candidate refusal of a spec should be reported as a failure.
+
+    A refusal of a configuration the matrix expects to be **unsupported** is
+    correct (``ok``); a refusal of an expected-**supported** configuration is a
+    failure. This is what stops a supported collation from "passing" merely
+    because the candidate refused the whole corpus without comparing anything.
+    """
+    return not expected_supported
+
+
+def run_oracle_image(image, corpus, specs, port=1521, keep=False):
+    name = container_name("harness-oracle", image)
+    report = {"image": image, "engine": "oracle", "specs": [], "version": None}
+    if not image_present(image):
+        raise RuntimeError(f"image {image} not present (docker pull it first)")
+
+    # Oracle has no empty string: assigning `''` to a `VARCHAR2` stores NULL and
+    # `NLSSORT(NULL)` is NULL with no collation order. Any scenario whose string
+    # is empty is therefore not a datum Oracle can express, so it is excluded.
+    #
+    # Oracle also caps its UCA `NLSSORT` key at 2000 bytes; the `long_prefix`
+    # class is the only corpus source that exceeds it (verified against the
+    # crate). There Oracle truncates the key and is no longer pure DUCET, so the
+    # crate refuses those inputs (covered by unit tests). Excluding `long_prefix`
+    # keeps the supported Oracle specs *actually* compared, rather than falling
+    # back for the whole corpus. The differ assumes contiguous ids, so the
+    # survivors are renumbered.
+    corpus = [
+        dataclasses.replace(sc, id=i)
+        for i, sc in enumerate(sc for sc in corpus if sc.s != "" and sc.cat != "long_prefix")
+    ]
+
+    # Oracle ordering depends on the pinned DUCET tables and the Oracle data
+    # dictionary, not on the host ICU, so the real crate runs on the host.
+    candidate = HostCandidate()
+    specs_with_version = [{"id": s.id, "engine": "oracle", "collation": s.collation} for s in specs]
+    candidates = candidate.run(corpus, specs_with_version)
+
+    report["oracle_image_id"] = image_id(image)
+    oracle = None
+    try:
+        start_oracle(image, name, port)
+        report["server_version"] = server_version(name, engine="oracle")
+        for _ in range(40):
+            try:
+                oracle = OracleOracle(port=port)
+                break
+            except Exception:
+                time.sleep(3)
+        if oracle is None:
+            raise RuntimeError("oracle reported healthy but did not accept connections")
+        oracle.reset_table(corpus)
+        for spec in specs:
+            try:
+                src = oracle.order(spec, corpus)
+            except Exception as e:
+                report["specs"].append(
+                    {"id": spec.id, "collation": spec.collation, "error": str(e).splitlines()[0]}
+                )
+                continue
+            cand = candidates[spec.id]
+            expected_supported = spec.supported
+            # A runtime comparison failure is always a defect, never an accepted
+            # refusal, even for a spec the matrix expects to be unsupported.
+            if cand.outcome is Outcome.ERROR:
+                report["specs"].append(
+                    {
+                        "id": spec.id,
+                        "collation": spec.collation,
+                        "supported": False,
+                        "outcome": Outcome.ERROR.value,
+                        "ok": False,
+                        "expected_unsupported": not expected_supported,
+                        "note": cand.note,
+                    }
+                )
+                continue
+            if not cand.supported:
+                # A supported Oracle collation that refuses the corpus is a
+                # failure: the corpus excludes inputs over the 2000-byte limit,
+                # so every supported spec must yield real comparisons. The
+                # per-input over-limit fallback is exercised by dedicated tests,
+                # never here, and must not let a whole spec pass uncompared.
+                ok = supported_refusal_is_a_failure(expected_supported)
+                report["specs"].append(
+                    {
+                        "id": spec.id,
+                        "collation": spec.collation,
+                        "supported": False,
+                        "outcome": Outcome.REFUSED.value,
+                        "ok": ok,
+                        "expected_unsupported": not expected_supported,
+                        "note": cand.note,
+                    }
+                )
+                continue
+            if not expected_supported:
+                report["specs"].append(
+                    {
+                        "id": spec.id,
+                        "collation": spec.collation,
+                        "supported": True,
+                        "ok": False,
+                        "expected_unsupported": True,
+                        "note": "crate accepted a configuration expected to be refused",
+                    }
+                )
+                continue
+            diff = compare(src, cand, corpus)
+            version_ok = src.version is None or src.version == cand.version
+            report["specs"].append(
+                {
+                    "id": spec.id,
+                    "collation": spec.collation,
+                    "supported": True,
+                    "source_version": src.version,
+                    "candidate_version": cand.version,
+                    "version_ok": version_ok,
+                    "diff": dataclasses.asdict(diff),
+                    "ok": diff.ok and version_ok,
+                }
+            )
+        oracle.close()
+    finally:
+        if not keep:
+            stop(name)
+    return report
+
+
 def run_matrix(
-    engine, images, corpus, pg_specs, mysql_specs, out, root, expected_images=None, keep=False
+    engine,
+    images,
+    corpus,
+    pg_specs,
+    mysql_specs,
+    out,
+    root,
+    expected_images=None,
+    keep=False,
+    oracle_specs=None,
 ):
+    oracle_specs = oracle_specs or []
     reports = []
     workdir = Path(root) / ".work"
     workdir.mkdir(exist_ok=True)
@@ -473,30 +669,42 @@ def run_matrix(
                 continue
             print(f"\n=== {image} ===")
             reports.append(run_mysql_image(image, corpus, mysql_specs, keep=keep))
+    if engine in ("oracle", "all"):
+        for image in images:
+            if not image.startswith("gvenzl/oracle"):
+                continue
+            print(f"\n=== {image} ===")
+            reports.append(run_oracle_image(image, corpus, oracle_specs, keep=keep))
     if out:
         Path(out).write_text(json.dumps(reports, indent=2))
         print(f"\nreport -> {out}")
 
-    reports = attach_acceptance(reports, expected_images, pg_specs, mysql_specs)
+    reports = attach_acceptance(reports, expected_images, pg_specs, mysql_specs, oracle_specs)
     return reports
 
 
-def _expected_spec_ids(report, pg_specs, mysql_specs):
-    ids = [s.id for s in (pg_specs if report["engine"] == "postgres" else mysql_specs)]
-    return ids
+def _expected_spec_ids(report, pg_specs, mysql_specs, oracle_specs):
+    if report["engine"] == "postgres":
+        specs = pg_specs
+    elif report["engine"] == "oracle":
+        specs = oracle_specs
+    else:
+        specs = mysql_specs
+    return [s.id for s in specs]
 
 
-def attach_acceptance(reports, expected_images, pg_specs, mysql_specs):
+def attach_acceptance(reports, expected_images, pg_specs, mysql_specs, oracle_specs=None):
     """Annotate each report with a fail-closed acceptance verdict.
 
     A report is acceptable only if it lists every expected spec and each one is
     explicitly ``ok is True``. Source errors, missing results, unexpected
     refusals (``ok is None``), and unexpected support/refusal all fail.
     """
+    oracle_specs = oracle_specs or []
     for report in reports:
         failures = []
         listed = {s["id"]: s for s in report["specs"]}
-        for sid in _expected_spec_ids(report, pg_specs, mysql_specs):
+        for sid in _expected_spec_ids(report, pg_specs, mysql_specs, oracle_specs):
             s = listed.get(sid)
             if s is None:
                 failures.append(f"{sid}: missing result")

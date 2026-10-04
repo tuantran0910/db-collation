@@ -57,11 +57,15 @@ This crate has one rule: **reproduce a configuration exactly, or refuse it.**
 | MySQL | `utf8mb4_0900_ai_ci` | UCA 9.0.0, NO PAD |
 | MySQL | `utf8mb4_unicode_ci` | UCA 4.0.0, PAD SPACE |
 | MySQL | `utf8mb4_0900_bin` | NO PAD, code-point order (equals bytewise for UTF-8) |
+| Oracle | `NLS_SORT=BINARY` | bytewise on `AL32UTF8` `VARCHAR2` |
+| Oracle | `UCA1210_DUCET` / `UCA0700_DUCET` | open DUCET tables, Oracle defaults (`AL32UTF8` `VARCHAR2`) |
 
 Everything else is refused: PostgreSQL libc/builtin providers and custom
 `collicurules`, MySQL language-tailored `*_0900_*` collations,
-`utf8mb4_general_ci`, `utf8mb4_bin` (PAD SPACE), other UCA versions, and
-non-UTF-8 encodings.
+`utf8mb4_general_ci`, `utf8mb4_bin` (PAD SPACE), other UCA versions, non-UTF-8
+encodings, and Oracle monolingual/`_M`/`BINARY_CI`/`BINARY_AI`/`*_ROOT`/
+`*_ORADUCET`/tailored collations, non-`AL32UTF8` charsets, and blank-padded
+`CHAR`/`NCHAR`.
 
 ## Installation
 
@@ -71,11 +75,16 @@ db-collation = "0.1"
 ```
 
 Default features enable the MySQL UCA backend. The PostgreSQL ICU backend links
-ICU4C and is opt-in:
+ICU4C and is opt-in; the Oracle UCA backend (11 MB of generated DUCET tables) is
+also opt-in:
 
 ```toml
 [dependencies]
 db-collation = { version = "0.1", features = ["postgres-icu", "serde"] }
+# Oracle: bytewise `BINARY` only.
+db-collation = { version = "0.1", features = ["oracle"] }
+# Oracle: adds `UCA1210_DUCET` / `UCA0700_DUCET`.
+db-collation = { version = "0.1", features = ["oracle-uca"] }
 ```
 
 ## Usage
@@ -112,6 +121,21 @@ The caller is responsible for reading the source catalog (provider, locale,
 determinism, `collversion`) and passing it in. See
 [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md).
 
+Oracle, resolved from the source's `NLS_SORT` and character set:
+
+```rust
+use db_collation::{Collation, OracleCollation, OracleUcaVersion};
+
+// `NLS_SORT=BINARY` and the two open DUCET collations are supported.
+let bin = Collation::oracle(OracleCollation::from_nls_sort("BINARY", "AL32UTF8"))?;
+let uca = Collation::oracle(OracleCollation::uca_ducet(OracleUcaVersion::Uca1210))?;
+let _ = (bin.compare("a", "A")?, uca.compare("strasse", "straße")?);
+
+// Everything else is refused, so the caller falls back to the source.
+assert!(Collation::oracle(OracleCollation::from_nls_sort("GERMAN", "AL32UTF8")).is_err());
+# Ok::<(), db_collation::Error>(())
+```
+
 ## Thread safety
 
 `Collation` is `Send + Sync`. ICU4C collator handles are neither, so they are
@@ -120,15 +144,18 @@ cached per thread; the handle is never shared across threads.
 ## Testing
 
 Correctness is established by a differential harness that compares **this
-crate** (not a reimplementation) against live PostgreSQL and MySQL:
+crate** (not a reimplementation) against live PostgreSQL, MySQL, and Oracle:
 
 - **0 mismatches** across PostgreSQL 14–18 (ICU 72/76) and MySQL 8.0/8.4/9.4,
   over a 1,414-string scenario-class corpus.
+- **0 mismatches** against Oracle 23.5 Free for `BINARY` and both `UCA*_DUCET`
+  collations; every non-modelled `NLS_SORT` is asserted refused.
 - **Exact over the full BMP**: the candidate's total order matches live MySQL for
   every one of the 63,498 BMP scalar values, for each modelled collation
   (`make harness-bmp`).
 - The PostgreSQL candidate is built and run **inside a candidate image derived
-  from the oracle image**, so it links the identical ICU data version.
+  from the oracle image**, so it links the identical ICU data version. MySQL and
+  Oracle candidates run on the host (their ordering does not depend on host ICU).
 - Unsupported configurations are asserted to be refused, and negative controls
   prove the differ can fail. A runtime comparison failure is never accepted as a
   refusal.
@@ -138,8 +165,9 @@ See [`harness/README.md`](harness/README.md).
 ```sh
 make test          # unit + integration tests
 make test-all      # all features
-make harness       # Docker differential matrix
+make harness       # Docker differential matrix (PostgreSQL + MySQL + Oracle)
 make harness-bmp   # full-BMP sweep vs live MySQL
+make harness-oracle # Oracle differential matrix (needs Docker)
 ```
 
 ## Documentation

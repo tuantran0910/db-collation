@@ -17,7 +17,7 @@ from .runner import run_matrix
 
 def main(argv=None):
     ap = argparse.ArgumentParser()
-    ap.add_argument("--engine", choices=["pg", "postgres", "mysql", "all"], default="all")
+    ap.add_argument("--engine", choices=["pg", "postgres", "mysql", "oracle", "all"], default="all")
     ap.add_argument("--scale", type=float, default=1.0)
     ap.add_argument("--seed", type=int, default=20261003)
     ap.add_argument(
@@ -30,12 +30,13 @@ def main(argv=None):
     corpus = generate(seed=args.seed, scale=args.scale)
     print(f"corpus: {len(corpus)} strings, {len(category_counts(corpus))} scenario classes")
 
-    images = args.images or (matrix.PG_IMAGES + matrix.MYSQL_IMAGES)
+    images = args.images or (matrix.PG_IMAGES + matrix.MYSQL_IMAGES + matrix.ORACLE_IMAGES)
     expected_images = [
         img
         for img in images
         if (args.engine in ("pg", "postgres", "all") and img.startswith("postgres"))
         or (args.engine in ("mysql", "all") and img.startswith("mysql"))
+        or (args.engine in ("oracle", "all") and img.startswith("gvenzl/oracle"))
     ]
     root = Path(__file__).resolve().parent.parent
     result = run_matrix(
@@ -48,10 +49,13 @@ def main(argv=None):
         root,
         expected_images=expected_images,
         keep=args.keep,
+        oracle_specs=matrix.ORACLE_SPECS,
     )
     for rep in result["reports"]:
         if rep["engine"] == "postgres":
             _print_pg(rep)
+        elif rep["engine"] == "oracle":
+            _print_oracle(rep)
         else:
             _print_mysql(rep)
 
@@ -88,6 +92,28 @@ def _print_pg(rep):
             f"ok={s['ok']!s:5} ver_ok={s.get('version_ok')!s:5} "
             f"pairs_bad={d['pair_disagreements']:6} "
             f"src_ver={s['source_version']} cand_ver={s['candidate_version']}"
+        )
+        if not s["ok"]:
+            print(f"      cats={d['top_categories']}")
+            for ex in d["examples"][:3]:
+                print(f"      e.g. {ex}")
+
+
+def _print_oracle(rep):
+    print(f"  server: {rep.get('server_version')}")
+    for s in rep["specs"]:
+        if "error" in s:
+            print(f"  {s['id']:24} SOURCE ERROR: {s['error']}")
+            continue
+        if not s.get("supported", True):
+            tag = "refused (expected)" if s.get("expected_unsupported") else "refused (UNEXPECTED)"
+            print(f"  {s['id']:24} {s['collation']:20} ok={s.get('ok')!s:5} {tag}")
+            continue
+        d = s["diff"]
+        print(
+            f"  {s['id']:24} {s['collation']:20} ok={s['ok']!s:5} "
+            f"pairs_bad={d['pair_disagreements']:6} src_ver={s.get('source_version')} "
+            f"cand_ver={s.get('candidate_version')}"
         )
         if not s["ok"]:
             print(f"      cats={d['top_categories']}")

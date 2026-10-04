@@ -55,6 +55,20 @@ pub enum Error {
         /// The cargo feature that would enable it.
         feature: &'static str,
     },
+
+    /// The collation is modelled, but a *specific input* exceeds a documented
+    /// limit of the source backend, so the comparison cannot be reproduced
+    /// exactly (e.g. Oracle truncates its UCA sort key past 2000 bytes).
+    ///
+    /// Unlike [`Error::Unsupported`], the configuration itself is supported;
+    /// only this input must fall back to comparing on the source. This is a
+    /// per-input outcome, not a construction failure.
+    InputLimit {
+        /// The provider or engine that was requested.
+        engine: &'static str,
+        /// Why the input cannot be compared.
+        reason: &'static str,
+    },
 }
 
 impl Error {
@@ -71,12 +85,21 @@ impl Error {
         }
     }
 
+    /// Construct an [`Error::InputLimit`].
+    #[cfg(feature = "oracle-uca")]
+    pub(crate) fn input_limit(engine: &'static str, reason: &'static str) -> Self {
+        Self::InputLimit { engine, reason }
+    }
+
     /// Returns `true` if the caller should fall back to the source database.
     #[must_use]
     pub const fn is_fallback_required(&self) -> bool {
         matches!(
             self,
-            Self::Unsupported { .. } | Self::VersionMismatch { .. } | Self::FeatureDisabled { .. }
+            Self::Unsupported { .. }
+                | Self::VersionMismatch { .. }
+                | Self::FeatureDisabled { .. }
+                | Self::InputLimit { .. }
         )
     }
 }
@@ -102,6 +125,10 @@ impl fmt::Display for Error {
                     "backend disabled at compile time; enable feature {feature:?}"
                 )
             }
+            Self::InputLimit { engine, reason } => write!(
+                f,
+                "{engine} collation cannot compare this input: {reason}; compare on the source instead"
+            ),
         }
     }
 }

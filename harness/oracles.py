@@ -2,6 +2,7 @@
 never by the db-collation library itself.
 """
 
+import contextlib
 import time
 
 from .model import OrderResult
@@ -103,6 +104,84 @@ class PostgresOracle:
             version=meta[2],
             supported=True,
             note=str(meta[0]),
+        )
+
+    def close(self):
+        self.conn.close()
+
+
+class OracleOracle:
+    """Live Oracle oracle via `python-oracledb` in thin mode.
+
+    Oracle selects collation by name through `NLSSORT(s, 'NLS_SORT=<name>')`.
+    The corpus is loaded into a table and ordered per spec with a window
+    `DENSE_RANK()`, giving both the total order and the equivalence classes.
+
+    Only three `NLS_SORT` values are modelled by the crate; the rest are
+    refused there (and asserted refused by the matrix), but the oracle still
+    orders them so the refusal is *against real data*, not an assumption.
+    """
+
+    def __init__(
+        self,
+        host="127.0.0.1",
+        port=1521,
+        service="FREEPDB1",
+        user="system",
+        password="cdc-review",
+    ):
+        import oracledb  # local import: harness-only dependency
+
+        self.oracledb = oracledb
+        self.conn = oracledb.connect(user=user, password=password, dsn=f"{host}:{port}/{service}")
+        cur = self.conn.cursor()
+        # Oracle has no `TRUNCATE` reset story worth relying on across versions;
+        # drop-and-create is deterministic.
+        with contextlib.suppress(oracledb.DatabaseError):
+            cur.execute("DROP TABLE harness_corpus")
+        cur.execute("CREATE TABLE harness_corpus (id NUMBER PRIMARY KEY, s VARCHAR2(4000 CHAR))")
+        self.conn.commit()
+
+    def reset_table(self, corpus):
+        cur = self.conn.cursor()
+        cur.execute("TRUNCATE TABLE harness_corpus")
+        cur.executemany(
+            "INSERT INTO harness_corpus(id, s) VALUES (:1, :2)",
+            [(int(sc.id), sc.s) for sc in corpus],
+        )
+        self.conn.commit()
+
+    def order(self, spec, corpus):
+        cur = self.conn.cursor()
+        # `NLS_SORT` is a collation name, not a bind-able value inside the
+        # `NLSSORT` format string, so the name must be inlined. Names come from
+        # the fixed matrix, never from user input; still, reject anything that
+        # could break out of the quoted literal.
+        name = spec.collation
+        if not all(c.isalnum() or c == "_" for c in name):
+            raise ValueError(f"unsafe Oracle NLS_SORT name: {name!r}")
+        cur.execute(
+            f"SELECT id, DENSE_RANK() OVER "
+            f"(ORDER BY NLSSORT(s, 'NLS_SORT={name}')) "
+            f"FROM harness_corpus"
+        )
+        rows = cur.fetchall()
+        rank = {int(r[0]): int(r[1]) for r in rows}
+        order = [int(r[0]) for r in sorted(rows, key=lambda r: (r[1], r[0]))]
+        # Oracle identifies the active UCA data version through the `NLS_SORT`
+        # name (`UCA1210` = Unicode 12.1, `UCA0700` = Unicode 7.0); `BINARY` has
+        # none. The canonical string is the Unicode version the crate reports.
+        version = {
+            "UCA1210": "12.1.0",
+            "UCA0700": "7.0.0",
+        }.get(name[:7])
+        return OrderResult(
+            spec_id=spec.id,
+            order=order,
+            rank=rank,
+            version=version,
+            supported=True,
+            note=name,
         )
 
     def close(self):

@@ -9,6 +9,10 @@ Both sides are rustfmt-formatted before comparison, so the check compares the
 literals — not just hex weight literals. A change to `return Some(v)` in the
 lookup helper is therefore detected.
 
+The Oracle generator is checked the same way, covering both `table_uca*.rs` and
+their vendored normalization data (decomposition/combining-class tables), the
+implicit ranges and the Han intervals: editing any of those changes the output.
+
     python -m harness.check_weights
 """
 
@@ -18,10 +22,11 @@ import sys
 import tempfile
 from pathlib import Path
 
-from . import gen_weights
+from . import gen_uca, gen_weights
 
 ROOT = Path(__file__).resolve().parent.parent
-TABLE_DIR = ROOT / "crates" / "db-collation" / "src" / "mysql"
+MYSQL_DIR = ROOT / "crates" / "db-collation" / "src" / "mysql"
+ORACLE_DIR = ROOT / "crates" / "db-collation" / "src" / "oracle"
 
 
 def _rustfmt(path):
@@ -73,11 +78,33 @@ def main() -> int:
             gen_weights.UCA400_OVERFLOW_PAGE,
         )
         for name in ("table_0900.rs", "table_0400.rs"):
-            if not _same_source(TABLE_DIR / name, tmp / name):
+            if not _same_source(MYSQL_DIR / name, tmp / name):
+                failures.append(name)
+
+        # Oracle DUCET tables. `emit` formats in place; compare the full source.
+        gen_uca.emit(
+            "allkeys-12.1.0.txt",
+            tmp / "table_uca1210.rs",
+            "12.1.0",
+            "Unicode Collation Algorithm 12.1.0 DUCET (Oracle `UCA1210_DUCET`).",
+            gen_uca.HAN_CORE_1210,
+        )
+        gen_uca.emit(
+            "allkeys-7.0.0.txt",
+            tmp / "table_uca0700.rs",
+            "7.0.0",
+            "Unicode Collation Algorithm 7.0.0 DUCET (Oracle `UCA0700_DUCET`).",
+            gen_uca.HAN_CORE_0700,
+        )
+        for name in ("table_uca1210.rs", "table_uca0700.rs"):
+            if not _same_source(ORACLE_DIR / name, tmp / name):
                 failures.append(name)
 
     if failures:
-        print("weight-table drift detected; run `make gen-weights`:", file=sys.stderr)
+        print(
+            "weight-table drift detected; run `make gen-weights` and `make gen-uca`:",
+            file=sys.stderr,
+        )
         for name in failures:
             print(f"  {name}", file=sys.stderr)
         return 1
