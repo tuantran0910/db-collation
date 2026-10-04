@@ -71,7 +71,7 @@ encodings, and Oracle monolingual/`_M`/`BINARY_CI`/`BINARY_AI`/`*_ROOT`/
 
 ```toml
 [dependencies]
-db-collation = "0.1"
+db-collation = "0.2"
 ```
 
 Default features enable the MySQL UCA backend. The PostgreSQL ICU backend links
@@ -80,11 +80,11 @@ also opt-in:
 
 ```toml
 [dependencies]
-db-collation = { version = "0.1", features = ["postgres-icu", "serde"] }
+db-collation = { version = "0.2", features = ["postgres-icu", "serde"] }
 # Oracle: bytewise `BINARY` only.
-db-collation = { version = "0.1", features = ["oracle"] }
+db-collation = { version = "0.2", features = ["oracle"] }
 # Oracle: adds `UCA1210_DUCET` / `UCA0700_DUCET`.
-db-collation = { version = "0.1", features = ["oracle-uca"] }
+db-collation = { version = "0.2", features = ["oracle-uca"] }
 ```
 
 ## Usage
