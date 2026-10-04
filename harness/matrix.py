@@ -92,8 +92,11 @@ ORACLE_SPECS = [Spec("or-" + c, "oracle", c, True, supported=True) for c in ORAC
 ]
 
 # Pinned by digest so the DUCET data version under test cannot drift silently.
-# `gvenzl/oracle-free:23.5-slim-arm64` from Docker Hub (anonymous, multi-arch).
+# `gvenzl/oracle-free:23.5-slim` (Oracle Database 23ai Free 23.5.0.24.07) is a
+# Docker Hub multi-arch index: `linux/amd64` and `linux/arm64` resolve to the
+# same build, so the harness runs natively on x86_64 CI runners and on Apple
+# silicon alike. The digest pins the index, not a single platform's manifest.
 ORACLE_IMAGES = [
-    "gvenzl/oracle-free:23.5-slim-arm64"
-    "@sha256:0b6d2a693d9f77c8cb5e756411f60a38b4f854cf2a6b0be2f002942a66582aeb",
+    "gvenzl/oracle-free:23.5-slim"
+    "@sha256:93f68828039fd15fcd9fb58090535c13df8f38ea2afc63feb2010d8ca3cd947c",
 ]
