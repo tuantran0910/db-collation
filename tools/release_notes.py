@@ -19,7 +19,8 @@ The changelog follows [Keep a Changelog]: versions are level-2 headings of the
 form ``## [X.Y.Z] - YYYY-MM-DD`` (or ``## [Unreleased]``), and the file ends
 with a link-reference block. This tool prints the body under the requested
 version heading (the heading itself excluded), stopping at the next ``## [``
-heading or the link-reference block.
+heading or the link-reference block, prefixed with the version as a top-level
+heading so GitHub renders the release body full width.
 
 Usage:
     python tools/release_notes.py CHANGELOG.md 0.1.0
@@ -38,7 +39,7 @@ import sys
 from pathlib import Path
 
 # A level-2 heading whose text is ``[something]`` (optionally ``[x] - date``).
-_VERSION_HEADING = re.compile(r"^## \[(?P<label>[^\]]+)\]")
+_VERSION_HEADING = re.compile(r"^## \[(?P<label>[^\]]+)\](?P<rest>.*)$")
 # The link-reference block: ``[Unreleased]: https://...`` etc. at column 0.
 _LINK_REFERENCE = re.compile(r"^\[[^\]]+\]:\s")
 
@@ -66,6 +67,27 @@ def extract(changelog: str, version: str) -> str:
     return "\n".join(body).strip()
 
 
+def document(changelog: str, version: str) -> str:
+    """Return the release notes as a standalone document.
+
+    GitHub lays out a release body full width only when it begins with a
+    top-level heading; a body that starts at ``###`` is rendered as a nested
+    fragment and indented. So the extracted section (which starts at ``###``)
+    is prefixed with the version as an H1 title.
+
+    Raises ``KeyError`` if the version heading is absent.
+    """
+    lines = changelog.splitlines()
+    title = version
+    for line in lines:
+        match = _VERSION_HEADING.match(line)
+        if match and match.group("label").strip() == version:
+            title = (match.group("label").strip() + match.group("rest")).strip()
+            break
+    body = extract(changelog, version)
+    return f"# {title}\n\n{body}"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -79,11 +101,11 @@ def main(argv: list[str] | None = None) -> int:
 
     text = Path(args.changelog).read_text(encoding="utf-8")
     try:
-        notes = extract(text, args.version)
+        notes = document(text, args.version)
     except KeyError:
         print(f"error: no '## [{args.version}]' section in {args.changelog}", file=sys.stderr)
         return 1
-    if not notes:
+    if not extract(text, args.version):
         print(f"error: '## [{args.version}]' section is empty", file=sys.stderr)
         return 1
     print(notes)

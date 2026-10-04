@@ -18,7 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from release_notes import extract
+from release_notes import document, extract
 
 CHANGELOG = """\
 # Changelog
@@ -73,6 +73,26 @@ class TestExtract(unittest.TestCase):
         # A label that merely starts with the query must not match.
         with self.assertRaises(KeyError):
             extract(CHANGELOG, "0.2")
+
+
+class TestDocument(unittest.TestCase):
+    def test_starts_with_top_level_heading(self):
+        notes = document(CHANGELOG, "0.2.0")
+        first_line = notes.splitlines()[0]
+        self.assertTrue(first_line.startswith("# "))
+        self.assertNotIn("## ", first_line)
+
+    def test_title_includes_the_date_from_the_heading(self):
+        notes = document(CHANGELOG, "0.2.0")
+        self.assertEqual(notes.splitlines()[0], "# 0.2.0 - 2026-10-04")
+
+    def test_body_is_preserved_after_the_title(self):
+        notes = document(CHANGELOG, "0.2.0")
+        self.assertTrue(notes.endswith("### Fixed\n\n- A bug."))
+
+    def test_missing_version_raises(self):
+        with self.assertRaises(KeyError):
+            document(CHANGELOG, "9.9.9")
 
 
 if __name__ == "__main__":
